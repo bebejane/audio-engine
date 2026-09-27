@@ -232,6 +232,7 @@ export interface AudioEngine extends AudioEngineEvents {
 	initMidi(): Promise<MidiDeviceInfoLike[]>;
 	initMidiSource(deviceId: string): Promise<unknown>;
 	listDevices(): Promise<MediaDeviceInfoLike[]>;
+	listMidiDevices(): Promise<MidiDeviceInfoLike[]>;
 	createInputSource(stream: MediaStream, deviceId: string): void;
 	add(
 		id: string,

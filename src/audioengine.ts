@@ -269,8 +269,7 @@ class AudioEngine extends EventEmitter {
 		const jobs: Promise<void>[] = [];
 		if (wantInput) {
 			// an input that is already open stays open — never re-prompt
-			if (this._inputStatus && this._inputStatus.status === 'ok')
-				result.input = this._inputStatus;
+			if (this._inputStatus && this._inputStatus.status === 'ok') result.input = this._inputStatus;
 			else
 				jobs.push(
 					this._initInputFeature(options, restore).then((status) => {
@@ -323,9 +322,8 @@ class AudioEngine extends EventEmitter {
 				const preferred = [requested, stored].find(
 					(id) => id && devices.some((d) => d.deviceId === id),
 				);
-				const selected = (
-					preferred ? devices.find((d) => d.deviceId === preferred) : devices[0]
-				)?.deviceId;
+				const selected = (preferred ? devices.find((d) => d.deviceId === preferred) : devices[0])
+					?.deviceId;
 				if (!selected) return { status: 'ok', devices } as MidiInitStatus;
 				return this.initMidiSource(selected).then(
 					() => ({ status: 'ok', devices, selected }) as MidiInitStatus,
@@ -452,6 +450,22 @@ class AudioEngine extends EventEmitter {
 					resolve(this.inputDevices);
 				})
 				.catch((err) => reject(err));
+		});
+	}
+	listMidiDevices(): Promise<MidiDeviceInfoLike[]> {
+		return new Promise((resolve, reject) => {
+			this.midiDevices = WebMidi.inputs.map((d) => {
+				return {
+					deviceId: d.id,
+					name: d.name,
+					connection: d.connection,
+					state: d.state,
+					manufacturer: d.manufacturer,
+				};
+			});
+
+			this.emit('mididevices', this.midiDevices);
+			resolve(this.midiDevices);
 		});
 	}
 	/** Re-open the input stream for one enumerated device id (closing the old one). */
@@ -771,11 +785,7 @@ class AudioEngine extends EventEmitter {
 		this.soundForEach(id, (sound) => sound.pause(false));
 	}
 	/** Get the loop flag (no id/unset) or set looping with optional bounds. */
-	loop(
-		id?: string,
-		on?: boolean,
-		offset?: { start?: number; end?: number },
-	): boolean | void {
+	loop(id?: string, on?: boolean, offset?: { start?: number; end?: number }): boolean | void {
 		if (id) {
 			return this.get(id).sound.loop(on, offset);
 		} else {
