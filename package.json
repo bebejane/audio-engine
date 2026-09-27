@@ -1,0 +1,33 @@
+{
+	"name": "audio-engine",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "PurplePurples audio engine — Web Audio sampler / sequencer / mixer (no React).",
+	"exports": {
+		".": "./src/index.ts",
+		"./types": "./src/types.ts",
+		"./utils": "./src/utils.ts"
+	},
+	"types": "./src/index.ts",
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "node tests/verify-effects.mjs",
+		"worklet:gen": "node scripts/build-effects-worklet.mjs",
+		"worklet:check": "node scripts/build-effects-worklet.mjs --check",
+		"pretest": "node scripts/build-effects-worklet.mjs"
+	},
+	"dependencies": {
+		"events": "^3.3.0",
+		"jszip": "^3.10.2",
+		"lamejs": "^1.2.1",
+		"moment": "^2.31.0",
+		"wasm-media-encoders": "^0.7.0",
+		"webmidi": "^3.3.1"
+	},
+	"devDependencies": {
+		"@types/node": "^26.6.3",
+		"typescript": "^5.9.3"
+	},
+	"packageManager": "pnpm@12.3.4"
+}

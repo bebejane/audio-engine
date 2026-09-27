@@ -1,0 +1,35 @@
+Tape Delay — license and attribution
+====================================
+
+The tape character in this folder (source.js) is a JavaScript port of the
+re-deemer tape-emulation DSP:
+
+  * wow + flutter + scrape flutter capstan model
+  * Jiles-Atherton tape hysteresis (RK4), after Chowdhury DAFx-19
+  * record/repro emphasis, head bump, gap loss, spacing loss
+  * tape types and an "age" macro
+
+  from https://github.com/naturarum/re-deemer (crates/te2-dsp/src/tape/*)
+  Copyright (c) 2026 naturarum
+  Licensed under the ISC license (reproduced below).
+
+The base delay / feedback / mix structure follows cyrusasfa/TapeDelay
+(https://github.com/cyrusasfa/TapeDelay).
+
+------------------------------------------------------------------------------
+
+ISC License (re-deemer)
+
+Copyright (c) 2026 naturarum
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
