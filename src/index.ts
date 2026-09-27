@@ -7,8 +7,7 @@
  */
 export { default } from './audioengine';
 export { default as AudioEngine } from './audioengine';
-
-export { fileToMimeType } from './utils';
+export * from './utils';
 
 export type {
 	AudioEngine as AudioEngineFacade,

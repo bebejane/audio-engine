@@ -234,9 +234,7 @@ class Sound extends EventEmitter {
 		Object.keys(defaults).forEach(
 			(k) =>
 				((this as any)['_' + k] =
-					opt[k] !== undefined
-						? opt[k]
-						: (defaults as unknown as Record<string, unknown>)[k]),
+					opt[k] !== undefined ? opt[k] : (defaults as unknown as Record<string, unknown>)[k]),
 		);
 		this.id = id;
 		this.engine = engine;
@@ -521,10 +519,7 @@ class Sound extends EventEmitter {
 		return this._currentEffectParams();
 	}
 
-	effectParams(
-		idx?: number,
-		params?: Record<string, any>,
-	): EffectParamEntry | EffectParamEntry[] {
+	effectParams(idx?: number, params?: Record<string, any>): EffectParamEntry | EffectParamEntry[] {
 		if (params === undefined && idx === undefined) return this._currentEffectParams();
 		if (idx !== undefined && !this.effects[idx]) return {} as EffectParamEntry;
 		if (params === undefined && idx !== undefined) return this._currentEffectParams(idx);
