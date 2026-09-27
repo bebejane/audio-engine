@@ -116,6 +116,11 @@ To add an effect: add `source.js` + `index.ts`, register it in both `EFFECTS` an
   (webaudio-peaks, array-move) — keep that pattern rather than adding deps.
 - **Defaults:** `modelsPath = '/models'`, `audioPath = '/audio'`; presets are
   slot-addressed (10 slots, one per number key).
+- **Initialization:** `engine.init(options)` is the single opt-in bootstrap
+  (`input`/`midi` default to `false`; failures are per-feature `status`, never a
+  rejection). `engine.resume()` must be called from a user gesture. Keep the
+  granular `initInputSource`/`initMidiSource` methods for device switching; see
+  [`docs/README.md`](./docs/README.md#initialization).
 
 ## Before you finish
 

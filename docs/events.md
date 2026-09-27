@@ -103,7 +103,8 @@ keeps high-frequency scalar writes (volume/pan/elapsed) cheap.
 
 `engine.emitMasterState(patch)` merges a patch into the state and emits
 `masterstate`; a second argument carries the patch itself for callers that want
-to react only to the change.
+to react only to the change. `engine.init()` also emits the initial
+`masterstate` once the requested features have finished.
 
 ## Sound (per-cell) events
 

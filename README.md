@@ -60,7 +60,15 @@ import { fileToMimeType } from 'audio-engine';
 
 The app serves the model zips itself; pass its public paths via
 `new AudioEngine({ modelsPath: '/models', audioPath: '/audio' })` (those are the
-defaults).
+defaults). Bootstrap is a single opt-in call, and `resume()` must be called from
+a user gesture:
+
+```ts
+const engine = new AudioEngine();
+const { input, midi } = await engine.init({ input: true, midi: true });
+// from a click/keydown handler:
+await engine.resume();
+```
 
 ### Local development (linking into the app)
 

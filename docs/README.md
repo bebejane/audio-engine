@@ -31,8 +31,13 @@ import AudioEngine from 'audio-engine';
 // modelsPath / audioPath are the defaults when omitted
 const engine = new AudioEngine({ modelsPath: '/models', audioPath: '/audio' });
 
-// Open the audio input/midi devices (requires a user gesture in most browsers)
-await engine.init();
+// One bootstrap call. Opt in only to what you need — nothing prompts unless
+// asked — and failures come back per feature instead of throwing.
+// Safe to call more than once: concurrent calls share one run, and a feature
+// that is already open is never re-prompted.
+const { context, input, midi } = await engine.init({ input: true, midi: true });
+if (input?.status === 'denied') console.warn('microphone permission denied');
+if (midi?.status === 'ok') console.log('midi on', midi.selected);
 
 // Observe transport + grid state
 engine.on('masterstate', (state) => console.log(state));
@@ -62,6 +67,46 @@ engine.restorePreset(0);
 > Always call `engine.destroy(true)` when tearing the engine down (route change,
 > hot reload) so recorders, MIDI, the `devicechange` listener and all event
 > listeners are released.
+
+## Initialization
+
+`init(options)` is the single bootstrap. Everything is opt-in and failures are
+per-feature — a denied microphone or missing MIDI resolves with a `status`
+(`'ok' | 'skipped' | 'denied' | 'unsupported' | 'error'`) instead of rejecting
+the whole call:
+
+```ts
+type InitOptions = {
+  input?:   boolean | { deviceId?: string };  // default false — no mic prompt
+  midi?:    boolean | { deviceId?: string };  // default false — no MIDI prompt
+  restore?: boolean;                          // last-used devices (default true)
+  resume?:  boolean;                          // also resume the context (default false)
+};
+
+type InitResult = {
+  context: { state: AudioContextState; resumed: boolean };
+  input?:  { status: InitStatus; devices: MediaDeviceInfoLike[]; selected?: string; error?: unknown };
+  midi?:   { status: InitStatus; devices: MidiDeviceInfoLike[];  selected?: string; error?: unknown };
+};
+```
+
+- **Device preference:** explicit `{ deviceId }` wins, then the last-used device
+  (when `restore` is on), then the first available.
+- **MIDI auto-attach:** when MIDI comes up and a device is available, `init()`
+  also attaches its note handlers; `midi.selected` reports which device.
+- **Context resume is explicit.** Browsers only allow resuming from a user
+  gesture, so call `resume()` from a click/keydown handler:
+
+  ```ts
+  button.addEventListener('click', async () => {
+    await engine.resume();            // 'running' | 'suspended'
+    await engine.init({ input: true });
+  });
+  ```
+
+- **Call it once.** `init()` dedupes concurrent calls and reuses an already-open
+  feature. To change devices later, use the granular methods
+  (`initInputSource`, `initMidiSource`, `initMidiDevices`).
 
 ## Architecture
 

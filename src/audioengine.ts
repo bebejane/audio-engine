@@ -15,12 +15,16 @@ import type { Effect } from './effects/core';
 import type { EffectDefinition } from './effects';
 import type {
 	AudioEngineOptions,
+	InitOptions,
+	InitResult,
+	InputInitStatus,
 	MediaDeviceInfoLike,
 	MidiDeviceInfoLike,
+	MidiInitStatus,
 	ProcessSampleOptions,
 } from './types';
 
-/** Result of initInputDevices()/init(). */
+/** Result of initInputDevices(): the inputs and the one actually opened. */
 type InputInitResult = { devices: MediaDeviceInfoLike[]; selected: string };
 
 /** A live sound entry as stored in engine.sounds / engine.get(id). */
@@ -98,6 +102,12 @@ class AudioEngine extends EventEmitter {
 	enableLoops: boolean;
 	enableElapsed: boolean;
 	_onDeviceChange: (() => void) | null;
+	/** In-flight bootstrap promise, so concurrent init() calls share one run. */
+	_bootstrap: Promise<InitResult> | null;
+	/** Last successful input init (reused so init() never re-prompts). */
+	_inputStatus: InputInitStatus | null;
+	/** Last successful MIDI init (reused so init() never re-prompts). */
+	_midiStatus: MidiInitStatus | null;
 
 	/**
 	 * Build the engine: merge options over defaults, create the AudioContext
@@ -142,6 +152,9 @@ class AudioEngine extends EventEmitter {
 		this.outputStream = null;
 		this.recordingId = 0;
 		this.trimThreshold = 0.05;
+		this._bootstrap = null;
+		this._inputStatus = null;
+		this._midiStatus = null;
 		this.onMidiNoteOn = this.onMidiNoteOn.bind(this);
 		this.onMidiNoteOff = this.onMidiNoteOff.bind(this);
 		this.masterGain = this.context.createGain();
@@ -207,7 +220,8 @@ class AudioEngine extends EventEmitter {
 				this.emit('inputdevices', devices);
 			});
 		};
-		navigator.mediaDevices.addEventListener('devicechange', this._onDeviceChange);
+		if (navigator.mediaDevices && navigator.mediaDevices.addEventListener)
+			navigator.mediaDevices.addEventListener('devicechange', this._onDeviceChange);
 	}
 	/**
 	 * Merge a partial state patch into `master.state` and emit `masterstate`
@@ -219,20 +233,136 @@ class AudioEngine extends EventEmitter {
 		this.emit('masterstate', this.master.state, opt);
 	}
 	/**
-	 * Initialize audio input (and, via the app, MIDI) and emit the initial
-	 * `masterstate`. `lastInput`/`lastMidiInput` restore the previously used
-	 * devices.
-	 * @returns the enumerated devices plus the selected input id.
+	 * Initialize the engine in one call. Features are opt-in — `input`/`midi`
+	 * default to `false`, so nothing prompts unless asked — and isolated: a
+	 * denied or unsupported capability resolves with a per-feature `status`
+	 * instead of rejecting the whole call.
+	 *
+	 * Concurrent calls share one bootstrap (React StrictMode double-invokes),
+	 * and a feature that already came up is reused rather than prompted again.
+	 * Call `init()` once at startup; use the granular methods to switch devices
+	 * later.
+	 *
+	 * @param options - which capabilities to bring up; see {@link InitOptions}.
+	 * @returns per-feature {@link InitResult}.
 	 */
-	init(lastInput?: string | null, lastMidiInput?: string | null): Promise<InputInitResult> {
-		return new Promise((resolve, reject) => {
-			return this.initInputDevices(lastInput)
-				.then((devices) => {
-					resolve(devices);
-					this.emit('masterstate', this.master.state);
-				})
-				.catch((err) => reject(err));
+	init(options: InitOptions = {}): Promise<InitResult> {
+		if (this._bootstrap) return this._bootstrap;
+		const run = this._bootstrapInit(options);
+		this._bootstrap = run;
+		// clear once settled so a later call can bring up other features
+		const clear = () => {
+			if (this._bootstrap === run) this._bootstrap = null;
+		};
+		run.then(clear, clear);
+		return run;
+	}
+	/** Run the requested init features independently and assemble the result. */
+	_bootstrapInit(options: InitOptions): Promise<InitResult> {
+		const restore = options.restore !== false;
+		const wantInput = options.input !== undefined && options.input !== false;
+		const wantMidi = options.midi !== undefined && options.midi !== false;
+		const result: InitResult = {
+			context: { state: this.context.state, resumed: this.context.state === 'running' },
+		};
+
+		const jobs: Promise<void>[] = [];
+		if (wantInput) {
+			// an input that is already open stays open — never re-prompt
+			if (this._inputStatus && this._inputStatus.status === 'ok')
+				result.input = this._inputStatus;
+			else
+				jobs.push(
+					this._initInputFeature(options, restore).then((status) => {
+						this._inputStatus = status;
+						result.input = status;
+					}),
+				);
+		}
+		if (wantMidi) {
+			if (this._midiStatus && this._midiStatus.status === 'ok') result.midi = this._midiStatus;
+			else
+				jobs.push(
+					this._initMidiFeature(options, restore).then((status) => {
+						this._midiStatus = status;
+						result.midi = status;
+					}),
+				);
+		}
+
+		return Promise.all(jobs).then(async () => {
+			if (options.resume) await this.resume();
+			result.context = {
+				state: this.context.state,
+				resumed: this.context.state === 'running',
+			};
+			this.emit('masterstate', this.master.state);
+			return result;
 		});
+	}
+	/** Bring up the microphone input and report the outcome (never rejects). */
+	_initInputFeature(options: InitOptions, restore: boolean): Promise<InputInitStatus> {
+		const requested = typeof options.input === 'object' ? options.input.deviceId : undefined;
+		const deviceId =
+			requested || (restore ? this._readStored('lastInputDevice') : null) || undefined;
+		return this.initInputDevices(deviceId).then(
+			({ devices, selected }) => ({ status: 'ok', devices, selected }) as InputInitStatus,
+			(err) => {
+				const status =
+					err === 'NOTSUPPORTED' ? 'unsupported' : err === 'NOTALLOWED' ? 'denied' : 'error';
+				return { status, devices: this.inputDevices || [], error: err } as InputInitStatus;
+			},
+		);
+	}
+	/** Bring up MIDI (and attach note handlers) and report the outcome. */
+	_initMidiFeature(options: InitOptions, restore: boolean): Promise<MidiInitStatus> {
+		const requested = typeof options.midi === 'object' ? options.midi.deviceId : undefined;
+		return this.initMidiDevices().then(
+			(devices) => {
+				const stored = restore ? this._readStored('lastMidiDevice') : null;
+				const preferred = [requested, stored].find(
+					(id) => id && devices.some((d) => d.deviceId === id),
+				);
+				const selected = (
+					preferred ? devices.find((d) => d.deviceId === preferred) : devices[0]
+				)?.deviceId;
+				if (!selected) return { status: 'ok', devices } as MidiInitStatus;
+				return this.initMidiSource(selected).then(
+					() => ({ status: 'ok', devices, selected }) as MidiInitStatus,
+					(err) => ({ status: 'error', devices, selected, error: err }) as MidiInitStatus,
+				);
+			},
+			(err) => ({ status: 'unsupported', devices: [], error: err }) as MidiInitStatus,
+		);
+	}
+	/**
+	 * Resume the AudioContext if it is suspended. Browsers only honor this from
+	 * a user gesture; if refused, the promise still resolves and the returned
+	 * state stays `'suspended'`, so callers can retry from a click handler.
+	 *
+	 * @returns the resulting AudioContext state.
+	 */
+	resume(): Promise<AudioContextState> {
+		if (this.context.state !== 'suspended') return Promise.resolve(this.context.state);
+		// resolve (not reject) even when the browser refuses; state stays suspended
+		return this.context.resume().then(
+			() => this.context.state,
+			() => this.context.state,
+		);
+	}
+	/** Read a localStorage key defensively (private mode / SSR can throw). */
+	_readStored(key: string): string | null {
+		try {
+			return typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+		} catch (err) {
+			return null;
+		}
+	}
+	/** Write a localStorage key defensively (private mode / SSR can throw). */
+	_writeStored(key: string, value: string): void {
+		try {
+			if (typeof localStorage !== 'undefined') localStorage.setItem(key, value);
+		} catch (err) {}
 	}
 	/**
 	 * Request the microphone (preferring `lastDeviceId`), enumerate the input
@@ -359,7 +489,7 @@ class AudioEngine extends EventEmitter {
 			this.inputAnalyser = new Analyser('input', this.context, this.inputStreamSource);
 		else this.inputAnalyser.setNode(this.inputStreamSource);
 		this.inputDeviceId = deviceId;
-		localStorage.setItem('lastInputDevice', deviceId);
+		this._writeStored('lastInputDevice', deviceId);
 	}
 	/** Stop all tracks of the current input stream (if any). */
 	closeInputStream() {
@@ -634,7 +764,7 @@ class AudioEngine extends EventEmitter {
 		this.get().forEach((s) => s.sound.pause(on));
 		return on;
 	}
-		/** Resume a paused sound (delegates to Sound.pause(false)). */
+	/** Resume a paused sound (delegates to Sound.pause(false)). */
 	unpause(id: string): void {
 		// Sound has no `unpause`; resuming is `pause(false)` (this engine method
 		// previously called a non-existent Sound.unpause and would have thrown)
@@ -655,15 +785,15 @@ class AudioEngine extends EventEmitter {
 			});
 		}
 	}
-		/** Loop start of one sound, in seconds. */
+	/** Loop start of one sound, in seconds. */
 	loopStart(id: string, offset?: number): number {
 		return this.get(id).sound._loopStart;
 	}
-		/** Loop end of one sound, in seconds. */
+	/** Loop end of one sound, in seconds. */
 	loopEnd(id: string, offset?: number): number {
 		return this.get(id).sound._loopEnd;
 	}
-		/** Get one sound's volume (no `vol`) or set it, or set all when id is omitted. */
+	/** Get one sound's volume (no `vol`) or set it, or set all when id is omitted. */
 	volume(id?: string, vol?: number): number | void {
 		if (vol === undefined) {
 			const s = this._sound(id);
@@ -682,7 +812,7 @@ class AudioEngine extends EventEmitter {
 			this.get().forEach((s) => s.sound.volume(vol));
 		}
 	}
-		/** Get one sound's additive gain (no `gain`) or set it. */
+	/** Get one sound's additive gain (no `gain`) or set it. */
 	gain(id: string, gain?: number): number | void {
 		if (id) {
 			const s = this._sound(id);
@@ -690,7 +820,7 @@ class AudioEngine extends EventEmitter {
 		}
 		this.get().forEach((s) => s.sound.gain(gain));
 	}
-		/** Set playback rate on one sound, or all sounds when id is omitted. */
+	/** Set playback rate on one sound, or all sounds when id is omitted. */
 	rate(id?: string, rate?: number): void {
 		this.soundForEach(id, (sound) => sound.rate(rate));
 	}
@@ -698,29 +828,29 @@ class AudioEngine extends EventEmitter {
 	pitch(id: string, pitch: number): void {
 		this.soundForEach(id, (sound) => sound.pitch(pitch));
 	}
-		/** Mute one sound (or all, and optional state) via Sound.mute. */
+	/** Mute one sound (or all, and optional state) via Sound.mute. */
 	mute(id: string, on = true): void {
 		this.soundForEach(id, (sound) => sound.mute(on));
 	}
-		/** Unmute one sound (Sound.mute(false)). */
+	/** Unmute one sound (Sound.mute(false)). */
 	unmute(id: string): void {
 		// Sound has no `unmute`; unmuting is mute(false)
 		this.soundForEach(id, (sound) => sound.mute(false));
 	}
-		/** Pan one sound (degrees); returns the computed panner position. */
+	/** Pan one sound (degrees); returns the computed panner position. */
 	pan(id: string, deg: number): unknown {
 		const s = this._sound(id);
 		return s ? s.pan(deg) : undefined;
 	}
-		/** Raw buffer duration of one sound, in seconds. */
+	/** Raw buffer duration of one sound, in seconds. */
 	duration(id: string): number {
 		return this.get(id).sound._duration;
 	}
-		/** Jump one sound to `sec` seconds. */
+	/** Jump one sound to `sec` seconds. */
 	jump(id: string, sec: number): unknown {
 		return this.get(id).sound.jump(sec);
 	}
-		/**
+	/**
 	 * Solo one sound. With `multi`, other sounds keep their own solo state and
 	 * muted ones are handled accordingly; without it, only `id` is soloed.
 	 */
@@ -730,7 +860,7 @@ class AudioEngine extends EventEmitter {
 			else s.sound.solo(multi ? s.sound._solo : false, multi ? !s.sound._solo : on);
 		});
 	}
-		/** Get one sound's lock flag (no `on`) or set it, or set all when id is omitted. */
+	/** Get one sound's lock flag (no `on`) or set it, or set all when id is omitted. */
 	lock(id?: string, on?: boolean): boolean | void {
 		if (id) {
 			const s = this._sound(id);
@@ -738,19 +868,19 @@ class AudioEngine extends EventEmitter {
 		}
 		this.get().forEach((s) => s.sound.lock(on));
 	}
-		/** Reverse (or un-reverse) one sound's buffer. */
+	/** Reverse (or un-reverse) one sound's buffer. */
 	reverse(id: string, on: boolean): void {
 		this.get(id).sound.reverse(on);
 	}
-		/** Crop one sound to the `[start, end]` second range. */
+	/** Crop one sound to the `[start, end]` second range. */
 	crop(id: string, start: number, end: number): void {
 		this.get(id).sound.crop(start, end);
 	}
-		/** True while one sound is playing. */
+	/** True while one sound is playing. */
 	playing(id: string): boolean {
 		return this.get(id).sound._playing;
 	}
-		/** Pause if playing else play, for one sound or (when id is omitted) the grid. */
+	/** Pause if playing else play, for one sound or (when id is omitted) the grid. */
 	toggleplay(id?: string): void {
 		if (id) this.get(id).sound._playing ? this.pause(id) : this.play(id);
 		else
@@ -759,7 +889,7 @@ class AudioEngine extends EventEmitter {
 				else this.play(s.id);
 			});
 	}
-		/** Unmute if muted else mute, for one sound or (when id is omitted) the grid. */
+	/** Unmute if muted else mute, for one sound or (when id is omitted) the grid. */
 	togglemute(id?: string): void {
 		if (id) this.get(id).sound.mute() ? this.mute(id) : this.unmute(id);
 		else
@@ -768,7 +898,7 @@ class AudioEngine extends EventEmitter {
 				else this.mute(s.id);
 			});
 	}
-		/** Emit the engine-level load events for one sound (`load`, `load<id>`). */
+	/** Emit the engine-level load events for one sound (`load`, `load<id>`). */
 	onLoad(id: string): void {
 		this.emit('load', id);
 		this.emit('load' + id, id, true);
@@ -782,7 +912,7 @@ class AudioEngine extends EventEmitter {
 	}
 	get(): SoundItem[];
 	get(id: string): SoundItem;
-		/**
+	/**
 	 * Return the sound item for `id`, or the whole list when omitted.
 	 * @throws when `id` is not registered.
 	 */
@@ -792,7 +922,7 @@ class AudioEngine extends EventEmitter {
 
 		return this.soundMap[id];
 	}
-		/**
+	/**
 	 * Destroy all sounds and analysers. With `force`, also tears down the
 	 * recorders, MIDI, the devicechange listener and all event listeners — used
 	 * when the engine is being discarded entirely.
@@ -814,31 +944,38 @@ class AudioEngine extends EventEmitter {
 				WebMidi.disable();
 			} catch (err) {}
 
-			if (this._onDeviceChange)
+			if (
+				this._onDeviceChange &&
+				navigator.mediaDevices &&
+				navigator.mediaDevices.removeEventListener
+			)
 				navigator.mediaDevices.removeEventListener('devicechange', this._onDeviceChange);
+			this._bootstrap = null;
+			this._inputStatus = null;
+			this._midiStatus = null;
 			this.removeAllListeners();
 			this.closeInputStream();
 		}
 	}
 
 	// ---- models & presets: thin facade over ModelManager -----------------
-		/** Model list from /models/index.json (drives the dropdown). */
+	/** Model list from /models/index.json (drives the dropdown). */
 	get models() {
 		return this.modelManager.models;
 	}
-		/** Saved preset slots for the current model. */
+	/** Saved preset slots for the current model. */
 	get presets() {
 		return this.modelManager.presets;
 	}
-		/** The currently loaded model, or null before the first load. */
+	/** The currently loaded model, or null before the first load. */
 	get model() {
 		return this.modelManager.model;
 	}
-		/** Fetch the model index (see ModelManager.loadModels). */
+	/** Fetch the model index (see ModelManager.loadModels). */
 	loadModels() {
 		return this.modelManager.loadModels();
 	}
-		/**
+	/**
 	 * Load and populate a model by name (or a supplied zip buffer). Clears the
 	 * automation take first, since a new model replaces every sound.
 	 */
@@ -848,49 +985,49 @@ class AudioEngine extends EventEmitter {
 		this.automation.clear();
 		return this.modelManager.loadModel(name, zipContent);
 	}
-		/** Load a model from a user-selected .zip File (clears automation first). */
+	/** Load a model from a user-selected .zip File (clears automation first). */
 	loadModelFromFile(file: File, onProgress?: (e: ProgressEvent<FileReader>) => void) {
 		this.automation.clear();
 		return this.modelManager.loadModelFromFile(file, onProgress);
 	}
-		/** Create an empty in-memory model of `cols` x `rows` cells (clears automation). */
+	/** Create an empty in-memory model of `cols` x `rows` cells (clears automation). */
 	createModel(name: string, cols: number, rows: number) {
 		this.automation.clear();
 		return this.modelManager.createModel(name, cols, rows);
 	}
-		/** Serialize the current state to a .purple.zip Blob (does not download). */
+	/** Serialize the current state to a .purple.zip Blob (does not download). */
 	saveModel(name?: string) {
 		return this.modelManager.saveModel(name);
 	}
-		/** Serialize and download the current model as a .purple.zip. */
+	/** Serialize and download the current model as a .purple.zip. */
 	downloadModel(name?: string) {
 		return this.modelManager.downloadModel(name);
 	}
-		/** Download one sound's original audio file. */
+	/** Download one sound's original audio file. */
 	downloadSound(id: string) {
 		return this.modelManager.downloadSound(id);
 	}
-		/** Trigger a browser download of `blob` under `filename`. */
+	/** Trigger a browser download of `blob` under `filename`. */
 	download(blob: Blob, filename: string) {
 		return this.modelManager.download(blob, filename);
 	}
-		/** Snapshot every sound into a preset (first free slot). */
+	/** Snapshot every sound into a preset (first free slot). */
 	savePreset(name?: string) {
 		return this.modelManager.savePreset(name);
 	}
-		/** Restore every sound to the preset stored in `index`. */
+	/** Restore every sound to the preset stored in `index`. */
 	restorePreset(index: number) {
 		return this.modelManager.restorePreset(index);
 	}
-		/** Randomize every sound and store the result as a preset (see ModelManager). */
+	/** Randomize every sound and store the result as a preset (see ModelManager). */
 	randomizePreset(index?: number) {
 		return this.modelManager.randomizePreset(index);
 	}
-		/** True when `index` holds a preset. */
+	/** True when `index` holds a preset. */
 	hasPreset(index: number) {
 		return this.modelManager.hasPreset(index);
 	}
-		/** Empty every preset slot. */
+	/** Empty every preset slot. */
 	clearPresets() {
 		return this.modelManager.clearPresets();
 	}
@@ -899,7 +1036,7 @@ class AudioEngine extends EventEmitter {
 	createEffectInstance(type: string, opt?: Record<string, unknown>): Promise<Effect> {
 		return createEffect(type, this.context, opt);
 	}
-		/**
+	/**
 	 * Add an effect to a sound's chain. A bypassed effect (`bypass !== false`)
 	 * is registered lazily (no worklet node until enabled); otherwise the node is
 	 * built now.
@@ -924,32 +1061,32 @@ class AudioEngine extends EventEmitter {
 		const effect = await createEffect(type, this.context, opt);
 		return sound.addEffect(type, effect, bypass);
 	}
-		/** Remove the effect at `idx` from a sound's chain. */
+	/** Remove the effect at `idx` from a sound's chain. */
 	removeEffect(id: string, idx: number): unknown {
 		return this.get(id).sound.removeEffect(idx);
 	}
-		/** Move an effect within a sound's chain from `idx` to `toIdx`. */
+	/** Move an effect within a sound's chain from `idx` to `toIdx`. */
 	moveEffect(id: string, idx: number, toIdx: number): unknown {
 		return this.get(id).sound.moveEffect(id, idx, toIdx);
 	}
-		/** Bypass or un-bypass the effect at `idx` on a sound's chain. */
+	/** Bypass or un-bypass the effect at `idx` on a sound's chain. */
 	effectBypass(id: string, idx: number, on: boolean): unknown {
 		return this.get(id).sound.effectBypass(idx, on);
 	}
-		/** Read or write one effect's params (whole chain when `idx` is omitted). */
+	/** Read or write one effect's params (whole chain when `idx` is omitted). */
 	effectParams(id: string, idx?: number, params?: Record<string, unknown>): unknown {
 		const s = this._sound(id);
 		return s ? s.effectParams(idx, params) : undefined;
 	}
-		/** Bypass the whole effect chain of a sound. */
+	/** Bypass the whole effect chain of a sound. */
 	disableEffects(id: string): void {
 		this.get(id).sound.disableEffects();
 	}
-		/** Re-enable the whole effect chain of a sound. */
+	/** Re-enable the whole effect chain of a sound. */
 	enableEffects(id: string): void {
 		this.get(id).sound.enableEffects();
 	}
-		/** Aggregate snapshot of the grid (count / playing / looping / muted / volume). */
+	/** Aggregate snapshot of the grid (count / playing / looping / muted / volume). */
 	info(): Record<string, unknown> {
 		const info: Record<string, unknown> = {};
 		info.count = this.get().length;
@@ -963,7 +1100,7 @@ class AudioEngine extends EventEmitter {
 		return info;
 	}
 
-		/**
+	/**
 	 * Build a transient, unregistered Sound from a URL (used for one-shot
 	 * previews). Not added to `sounds`; the caller owns it.
 	 */
@@ -980,7 +1117,7 @@ class AudioEngine extends EventEmitter {
 		return sound;
 	}
 
-		/** Start (`true`) or stop (`false`) a master-mix recording via masterRecorder. */
+	/** Start (`true`) or stop (`false`) a master-mix recording via masterRecorder. */
 	record(start: boolean): Promise<unknown> | void {
 		if (start) {
 			return this.masterRecorder
@@ -996,7 +1133,7 @@ class AudioEngine extends EventEmitter {
 		}
 		return;
 	}
-		/** Discard the in-progress master recording and emit the reset state. */
+	/** Discard the in-progress master recording and emit the reset state. */
 	cancelRecord() {
 		this.masterRecorder.cancel();
 		this.recording = false;
@@ -1005,7 +1142,7 @@ class AudioEngine extends EventEmitter {
 			recording: false,
 		});
 	}
-		/**
+	/**
 	 * Start/stop sampling the selected input into sound `id`. On success the
 	 * cell's audio is replaced with the recording.
 	 */
@@ -1032,7 +1169,7 @@ class AudioEngine extends EventEmitter {
 		}
 		return;
 	}
-		/** Cancel the in-progress sample take and clear the sampling state. */
+	/** Cancel the in-progress sample take and clear the sampling state. */
 	cancelSample(id: string): void {
 		this.sampleRecorder.cancel();
 		this.sampling = false;
@@ -1080,18 +1217,18 @@ class AudioEngine extends EventEmitter {
 		});
 		return this.encoderPromise;
 	}
-		/** Abort the in-flight encodeAudio worker (rejects with 'CANCELLED'). */
+	/** Abort the in-flight encodeAudio worker (rejects with 'CANCELLED'). */
 	cancelEncodeAudio() {
 		if (!this.worker) return;
 		this.worker.reject('CANCELLED');
 		this.worker.terminate();
 		this.worker = null;
 	}
-		/** Alias for {@link initMidiDevices}: enable WebMidi and list inputs. */
+	/** Alias for {@link initMidiDevices}: enable WebMidi and list inputs. */
 	initMidi(): Promise<MidiDeviceInfoLike[]> {
 		return this.initMidiDevices();
 	}
-		/**
+	/**
 	 * Enable WebMidi, list the current inputs and subscribe to
 	 * connected/disconnected so `mididevices` stays current.
 	 * @throws 'MIDI not supported' when WebMidi cannot start.
@@ -1146,7 +1283,10 @@ class AudioEngine extends EventEmitter {
 		this.emit('mididevices', this.midiDevices);
 		return this.midiDevices;
 	}
-		/** Listen to one MIDI input device for note on/off (replacing the previous). */
+	/**
+	 * Listen to one MIDI input device for note on/off (replacing the previous)
+	 * and remember it as `lastMidiDevice` for the next init().
+	 */
 	initMidiSource(midiDeviceId: string): Promise<void> {
 		try {
 			if (this.midiDevice) {
@@ -1154,17 +1294,19 @@ class AudioEngine extends EventEmitter {
 				this.midiDevice.removeListener('noteoff');
 			}
 			this.midiDevice = WebMidi.inputs.filter((d) => d.id === midiDeviceId)[0];
+			if (!this.midiDevice) return Promise.reject('MIDI device not found');
 			// WebMidi v3: addListener(event, listener, { channels? }) — the old
 			// v2 ('noteon', 'all', cb) form would pass 'all' as the listener
 			this.midiDevice.addListener('noteon', this.onMidiNoteOn.bind(this));
 			this.midiDevice.addListener('noteoff', this.onMidiNoteOff.bind(this));
+			this._writeStored('lastMidiDevice', midiDeviceId);
 		} catch (err) {
 			return Promise.reject(err);
 		}
 
 		return Promise.resolve();
 	}
-		/**
+	/**
 	 * Handle a MIDI note-on: in MIDI-learn mode, bind the note to the sound
 	 * waiting for it; otherwise play the mapped sound(s) at that velocity.
 	 */
@@ -1182,7 +1324,7 @@ class AudioEngine extends EventEmitter {
 		this.playNote(e.note.number, e.note.rawAttack);
 		this.emit('noteon', e);
 	}
-		/** Handle a MIDI note-off (emits `noteoff` with the note number). */
+	/** Handle a MIDI note-off (emits `noteoff` with the note number). */
 	onMidiNoteOff(e: NoteMessageEvent): void {
 		this.emit('noteoff', e.note.number);
 	}
@@ -1198,7 +1340,7 @@ class AudioEngine extends EventEmitter {
 		sound.midiNote(note);
 		sound.midiMapMode(false);
 	}
-		/** Remove the mapping between a sound and a MIDI note. */
+	/** Remove the mapping between a sound and a MIDI note. */
 	unmapMidiNote(id: string, note: number): void {
 		if (this.midiMap[note]) {
 			this.midiMap[note] = this.midiMap[note].filter((i) => {
@@ -1211,7 +1353,7 @@ class AudioEngine extends EventEmitter {
 			});
 		}
 	}
-		/** Enter (or leave) MIDI-learn mode for one sound and broadcast the state. */
+	/** Enter (or leave) MIDI-learn mode for one sound and broadcast the state. */
 	midiMapMode(id: string, on: boolean): void {
 		this.get().forEach((s) => {
 			s.sound.midiMapMode(s.id === id ? on : false);
@@ -1220,7 +1362,7 @@ class AudioEngine extends EventEmitter {
 			midiMapMode: on,
 		});
 	}
-		/** Play every sound mapped to `note`, scaling volume by `velocity` (0–127). */
+	/** Play every sound mapped to `note`, scaling volume by `velocity` (0–127). */
 	playNote(note: number, velocity: number): void {
 		if (this.midiMap[note]) {
 			this.midiMap[note].forEach((id) => {
@@ -1303,7 +1445,7 @@ class AudioEngine extends EventEmitter {
 			if (this.analyserMap[key] === analyser) delete this.analyserMap[key];
 		});
 	}
-		/** Destroy and forget every analyser (per-sound, input and output). */
+	/** Destroy and forget every analyser (per-sound, input and output). */
 	destroyAnalysers() {
 		this.analysers.forEach((analyser) => {
 			analyser.destroy();

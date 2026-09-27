@@ -80,6 +80,57 @@ export interface MidiDeviceInfoLike {
 	manufacturer: string;
 }
 
+/**
+ * Per-capability outcome of {@link AudioEngine.init}. `'ok'` and `'skipped'`
+ * are successful; `'denied'`/`'unsupported'`/`'error'` describe why a requested
+ * capability did not come up.
+ */
+export type InitStatus = 'ok' | 'skipped' | 'denied' | 'unsupported' | 'error';
+
+/** Result of initializing the microphone input (one feature of `init`). */
+export interface InputInitStatus {
+	status: InitStatus;
+	/** Inputs enumerated so far (labels may be blank before permission). */
+	devices: MediaDeviceInfoLike[];
+	/** Device id that was opened, when one was. */
+	selected?: string;
+	/** The underlying failure (permission error, …) for denied/error. */
+	error?: unknown;
+}
+
+/** Result of initializing MIDI (one feature of `init`). */
+export interface MidiInitStatus {
+	status: InitStatus;
+	/** MIDI inputs found. */
+	devices: MidiDeviceInfoLike[];
+	/** Device id that was attached for note input, when one was. */
+	selected?: string;
+	/** The underlying failure for unsupported/error. */
+	error?: unknown;
+}
+
+/** Combined result of {@link AudioEngine.init}. */
+export interface InitResult {
+	/** AudioContext state after the bootstrap (`resumed` is true when running). */
+	context: { state: AudioContextState; resumed: boolean };
+	/** Present only when `input` was requested. */
+	input?: InputInitStatus;
+	/** Present only when `midi` was requested. */
+	midi?: MidiInitStatus;
+}
+
+/** Options for {@link AudioEngine.init}. Everything is opt-in. */
+export interface InitOptions {
+	/** Initialize the microphone: `true`, `{ deviceId }`, or `false` (default). */
+	input?: boolean | { deviceId?: string };
+	/** Initialize MIDI: `true`, `{ deviceId }`, or `false` (default). */
+	midi?: boolean | { deviceId?: string };
+	/** Restore the last-used device ids from localStorage (default true). */
+	restore?: boolean;
+	/** Also resume the AudioContext (default false; must be a user gesture). */
+	resume?: boolean;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Any = any;
 
@@ -164,12 +215,19 @@ export interface AudioEngine extends AudioEngineEvents {
 	): Promise<Blob>;
 	/** Abort the in-flight encodeAudio (rejects with 'CANCELLED'). */
 	cancelEncodeAudio(): void;
-	/** Initialize input + MIDI devices, restoring last-used ids when given. */
-	init(
-		lastInputDevice?: string | null,
-		lastMidiDevice?: string | null,
+	/**
+	 * Initialize the engine in one call. Features are opt-in (`input`/`midi`
+	 * default to `false`, so nothing prompts unless asked) and isolated: a
+	 * denied/unsupported capability resolves with a per-feature status rather
+	 * than rejecting. Optionally resumes the AudioContext and restores the
+	 * last-used devices.
+	 */
+	init(options?: InitOptions): Promise<InitResult>;
+	/** Resume a suspended AudioContext; must be called from a user gesture. */
+	resume(): Promise<AudioContextState>;
+	initInputDevices(
+		lastDeviceId?: string | null,
 	): Promise<{ devices?: MediaDeviceInfoLike[]; selected?: string }>;
-	initInputDevices(): Promise<{ devices?: MediaDeviceInfoLike[]; selected?: string }>;
 	initInputSource(deviceId: string): Promise<unknown>;
 	initMidi(): Promise<MidiDeviceInfoLike[]>;
 	initMidiSource(deviceId: string): Promise<unknown>;
