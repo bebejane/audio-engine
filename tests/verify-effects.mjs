@@ -381,6 +381,370 @@ console.log('\npp-tapedelay');
 	}
 }
 
+// -- pp-magnetictape -------------------------------------------------------
+// Magnetic tape emulation: input drive -> odd/even saturation -> flange ->
+// age macro (lowpass sweep, granular noise, dips, bursts) -> hiss -> shame ->
+// linear dry/wet. Ported from hollance/TheKissOfShame (GPL-3.0) — see
+// magnetictape/LICENSE.txt.
+console.log('\npp-magnetictape');
+{
+	const base = {
+		inputDrive: 0.5, outputLevel: 0.5, shame: 0, age: 0, hiss: 0, mix: 1, flange: 0,
+	};
+	const SEC = Math.ceil(SR / BLOCK);
+	// the harness feeds silence unless a generator is supplied
+	const capture = (params, blocks, gen) => {
+		const d = makeProc('pp-magnetictape', params);
+		const out = new Float32Array(blocks * BLOCK);
+		for (let b = 0; b < blocks; b++) {
+			const inb = gen ? gen(b) : new Float32Array(BLOCK);
+			const [oL] = d.run(inb, inb);
+			out.set(oL, b * BLOCK);
+		}
+		return out;
+	};
+	const tone = (freq, blocks, amp = 0.5) => {
+		const n = blocks * BLOCK;
+		const t = new Float32Array(n);
+		for (let i = 0; i < n; i++) t[i] = amp * Math.sin((2 * Math.PI * freq * i) / SR);
+		return t;
+	};
+	const chunks = (buf) => (b) => buf.subarray(b * BLOCK, (b + 1) * BLOCK);
+	// a single impulse, a few blocks in, so the tails are easy to measure
+	const impulseAt = (block) => (b) => {
+		const buf = new Float32Array(BLOCK);
+		if (b === block) buf[0] = 1;
+		return buf;
+	};
+	const SETTLE = BLOCK * 40;
+	const mag = (sig, freq, at = SETTLE, len = 4096) => dftBin(sig, freq, at, len);
+	const worst = (sig) => {
+		let m = 0;
+		for (let i = 0; i < sig.length; i++) {
+			if (!Number.isFinite(sig[i])) return Infinity;
+			m = Math.max(m, Math.abs(sig[i]));
+		}
+		return m;
+	};
+
+	// mix=0 => exact dry passthrough (the blend is a straight linear crossfade)
+	const dryIn = tone(220, 20, 0.8);
+	const dry = capture({ ...base, mix: 0 }, 20, chunks(dryIn));
+	let dryErr = 0;
+	for (let i = 0; i < dry.length; i += 7) dryErr = Math.max(dryErr, Math.abs(dry[i] - dryIn[i]));
+	check('mix=0 => dry', dryErr < 1e-5, `maxErr=${dryErr.toExponential(2)}`);
+
+	// age sweeps the signal lowpass from 20 kHz down to 2 kHz
+	const blocks3 = SEC * 3;
+	const fresh = mag(capture({ ...base }, blocks3, chunks(tone(4000, blocks3))), 4000);
+	const old = mag(capture({ ...base, age: 1 }, blocks3, chunks(tone(4000, blocks3))), 4000);
+	check('age closes the lowpass', old < fresh * 0.2, `fresh=${fresh.toFixed(1)} aged=${old.toFixed(1)}`);
+
+	// hiss adds a broadband floor without eating the signal
+	const toneMag = (h) => mag(capture({ ...base, hiss: h }, blocks3, chunks(tone(1000, blocks3))), 1000);
+	const hfFloor = (h) => {
+		const o = capture({ ...base, hiss: h }, blocks3, chunks(tone(1000, blocks3, 0)));
+		let sum = 0;
+		for (let w = SETTLE; w + 2048 <= o.length; w += 2048) sum += dftBin(o, 10000, w, 2048);
+		return sum;
+	};
+	const clean = hfFloor(0);
+	const noisy = hfFloor(1);
+	check('hiss adds HF noise', clean < 1e-3 && noisy > clean * 20, `clean=${clean.toFixed(4)} noisy=${noisy.toFixed(3)}`);
+	check('hiss leaves the tone alone', Math.abs(toneMag(1) - toneMag(0)) < toneMag(0) * 0.05,
+		`dry=${toneMag(0).toFixed(1)} hissy=${toneMag(1).toFixed(1)}`);
+
+	// shame jitters the delay-line read position, so an impulse lands later the
+	// harder it is pushed (this is wow/flutter — a steady tone only wobbles in
+	// phase, so an amplitude test would not see it)
+	const smearPeak = (s) => {
+		const o = capture({ ...base, shame: s }, 40, impulseAt(2));
+		const start = 2 * BLOCK;
+		let peak = 0, idx = start;
+		for (let i = start; i < o.length; i++) {
+			if (Math.abs(o[i]) > peak) { peak = Math.abs(o[i]); idx = i; }
+		}
+		return idx - start;
+	};
+	const still = smearPeak(0);
+	const wild = smearPeak(1);
+	check('shame jitters the read position', wild - still > 20, `still=${still} wild=${wild}`);
+
+	// flange combs the signal: 997 Hz is not harmonically related to the
+	// 0..1000 sample delay, so it gets pulled down hard
+	const flanged = mag(capture({ ...base, flange: 1 }, blocks3, chunks(tone(997, blocks3))), 997);
+	const unflanged = mag(capture({ ...base }, blocks3, chunks(tone(997, blocks3))), 997);
+	check('flange combs', flanged < unflanged * 0.5, `dry=${unflanged.toFixed(1)} flanged=${flanged.toFixed(1)}`);
+
+	// the gain trims are -18..+18 dB
+	const at = (params) => mag(capture(params, blocks3, chunks(tone(440, blocks3))), 440);
+	check('inputDrive raises the drive', at({ ...base, inputDrive: 1 }) > at({ ...base, inputDrive: 0.5 }) * 1.2);
+	check('outputLevel is +/-18 dB', Math.abs(at({ ...base, outputLevel: 1 }) / at({ ...base, outputLevel: 0.5 }) - 7.94) < 0.6,
+		`ratio=${(at({ ...base, outputLevel: 1 }) / at({ ...base, outputLevel: 0.5 })).toFixed(2)} (7.94 = +18 dB)`);
+
+	// every degradation at once still stays finite and bounded
+	const wrecked = capture(
+		{ ...base, shame: 1, age: 1, hiss: 1, flange: 1 }, blocks3, chunks(tone(440, blocks3)),
+	);
+	const w = worst(wrecked);
+	check('max damage stays bounded', w < 2.5, `peak=${w.toFixed(2)}`);
+
+	// every parameter at both rails
+	let railsClean = true;
+	for (const p of [0, 1]) {
+		const o = capture(
+			{ inputDrive: p, outputLevel: p, shame: p, age: p, hiss: p, mix: p, flange: p },
+			8, chunks(tone(300, 8)),
+		);
+		if (worst(o) === Infinity) railsClean = false;
+	}
+	check('all params at 0 and at 1 run clean', railsClean);
+
+	// every buffer/envelope depth is derived from `sampleRate`, so a 48 kHz
+	// instance must build and run clean too
+	{
+		const prev = globalThis.sampleRate;
+		globalThis.sampleRate = 48000;
+		const d = makeProc('pp-magnetictape', { ...base, shame: 1, age: 1, hiss: 1, flange: 1 });
+		globalThis.sampleRate = prev;
+		let peak = 0;
+		let clean = true;
+		for (let b = 0; b < 200; b++) {
+			const buf = new Float32Array(BLOCK).fill(0.5);
+			const [oL, oR] = d.run(buf, buf);
+			for (const v of [oL[0], oR[0]]) {
+				if (!Number.isFinite(v)) clean = false;
+				else peak = Math.max(peak, Math.abs(v));
+			}
+		}
+		check('48 kHz instance runs clean', clean && peak < 2.5, `peak=${peak.toFixed(2)}`);
+	}
+}
+
+// -- pp-tapesaturation -----------------------------------------------------
+// The tape-saturation stage of Aureate: Drive -> 4x oversampled [Warmth
+// HF-rolloff -> 80 Hz head bump -> asymmetric Character saturator, ADAA1 in
+// HQ quality] -> dry/wet -> Output trim. Ported from
+// basilica-audio/Aureate (AGPL-3.0) — see tapesaturation/LICENSE.txt.
+console.log('\npp-tapesaturation');
+{
+	const base = {
+		drive: 0, warmth: 0, bias: 0, character: 0, quality: 0, mix: 1, output: 0,
+	};
+	// the oversampler runs 4x, so its group delay — and therefore the dry
+	// path's — is 48 host samples. Every parameter also glides over 50 ms from
+	// its default, and the default Warmth is 0.35, so nothing is measured
+	// before SETTLE (about 11.6 time constants).
+	const DRY = 48;
+	const SETTLE = 200 * BLOCK;
+	const BLOCKS = 300;
+	// 8820 samples is exactly 0.2 s, so any multiple of 5 Hz fits a whole
+	// number of periods and the naive DFT sees no leakage
+	const LEN = 8820;
+	const TAU = (2 * Math.PI);
+
+	const capture = (params, blocks, gen) => {
+		const d = makeProc('pp-tapesaturation', { ...base, ...params });
+		const out = new Float32Array(blocks * BLOCK);
+		for (let b = 0; b < blocks; b++) {
+			const inb = gen ? gen(b) : new Float32Array(BLOCK);
+			const [oL] = d.run(inb, inb);
+			out.set(oL, b * BLOCK);
+		}
+		return out;
+	};
+	const tone = (freq, blocks, amp = 0.5) => {
+		const n = blocks * BLOCK;
+		const t = new Float32Array(n);
+		for (let i = 0; i < n; i++) t[i] = amp * Math.sin((TAU * freq * i) / SR);
+		return t;
+	};
+	const chunks = (buf) => (b) => buf.subarray(b * BLOCK, (b + 1) * BLOCK);
+	const impulseAt = (block) => (b) => {
+		const buf = new Float32Array(BLOCK);
+		if (b === block) buf[0] = 1;
+		return buf;
+	};
+	const worst = (sig) => {
+		let m = 0;
+		for (let i = 0; i < sig.length; i++) {
+			if (!Number.isFinite(sig[i])) return Infinity;
+			m = Math.max(m, Math.abs(sig[i]));
+		}
+		return m;
+	};
+	const rmsOf = (sig) => {
+		let s = 0;
+		for (let i = SETTLE; i < sig.length; i++) s += sig[i] * sig[i];
+		return Math.sqrt(s / (sig.length - SETTLE));
+	};
+	const diffOf = (a, b) => {
+		let s = 0;
+		for (let i = SETTLE; i < a.length; i++) s += (a[i] - b[i]) ** 2;
+		return Math.sqrt(s / (a.length - SETTLE));
+	};
+	// gain at a multiple of 5 Hz, referenced to the exact magnitude of a sine
+	// of the same amplitude over the same whole number of periods
+	const gainAt = (out, f, amp) => dftBin(out, f, SETTLE, LEN) / ((amp * LEN) / 2);
+
+	// mix=0 must be an exact, phase-aligned passthrough: the dry side is
+	// delayed to match the wet path's group delay rather than left at zero lag,
+	// so a zero mix returns the input and not a combed near-copy of it
+	const dryIn = tone(220, BLOCKS, 0.8);
+	const dry = capture({ mix: 0 }, BLOCKS, chunks(dryIn));
+	let dryErr = 0;
+	for (let i = SETTLE; i < dry.length; i++) dryErr = Math.max(dryErr, Math.abs(dry[i] - dryIn[i - DRY]));
+	check('mix=0 => input delayed by the oversampler latency', dryErr < 1e-4, `maxErr=${dryErr.toExponential(2)}`);
+
+	// the wet path costs the same delay, which is what makes the blend align
+	{
+		const IMP = 250;
+		const o = capture({}, BLOCKS, impulseAt(IMP));
+		const at = maxIdx(o.subarray(IMP * BLOCK)).idx;
+		check('wet path latency matches the dry path', Math.abs(at - DRY) <= 2, `idx=+${at}`);
+	}
+
+	// the neutral wet path is transparent, and transparent in a linear way
+	{
+		const AMP = 0.02;
+		const unity = gainAt(capture({}, BLOCKS, chunks(tone(1005, BLOCKS, AMP))), 1005, AMP);
+		check('neutral wet path is ~unity at 1 kHz', Math.abs(unity - 1) < 0.02, `gain=${unity.toFixed(4)}`);
+		const tiny = gainAt(capture({}, BLOCKS, chunks(tone(1005, BLOCKS, 0.002))), 1005, 0.002);
+		check('neutral wet path is linear at low level', Math.abs(tiny - 1) < 0.005, `gain=${tiny.toFixed(4)}`);
+		const loud = gainAt(capture({}, BLOCKS, chunks(tone(1005, BLOCKS, 0.8))), 1005, 0.8);
+		check('a hot input is compressed', loud < unity * 0.95, `quiet=${unity.toFixed(3)} loud=${loud.toFixed(3)}`);
+	}
+
+	// Drive is the input gain into the saturator, -0..+24 dB
+	{
+		const h = (params, k) => dftBin(capture(params, BLOCKS, chunks(tone(1005, BLOCKS, 0.3))), 1005 * k, SETTLE, LEN);
+		const clean = h({}, 3) / h({}, 1);
+		const hot = h({ drive: 1 }, 3) / h({ drive: 1 }, 1);
+		check('drive adds harmonics', hot > clean * 20, `clean=${clean.toFixed(4)} hot=${hot.toFixed(4)}`);
+		check('drive lifts the fundamental', h({ drive: 1 }, 1) > h({}, 1) * 2,
+			`clean=${h({}, 1).toFixed(1)} hot=${h({ drive: 1 }, 1).toFixed(1)}`);
+	}
+
+	// Bias shifts the operating point, so the two half-cycles saturate against
+	// different ceilings and even harmonics appear; at zero bias the curve is
+	// antisymmetric and they cancel
+	{
+		const even = (b) => {
+			const o = capture({ bias: b, drive: 0.5 }, BLOCKS, chunks(tone(1005, BLOCKS, 0.3)));
+			return dftBin(o, 2010, SETTLE, LEN) / dftBin(o, 1005, SETTLE, LEN);
+		};
+		const e0 = even(0), e1 = even(1), em = even(-1);
+		check('zero bias stays symmetric', e0 < 0.01, `H2/H1=${e0.toFixed(4)}`);
+		check('bias introduces even harmonics', e1 > e0 * 10, `H2/H1=${e1.toFixed(4)}`);
+		check('bias is even-symmetric in sign', Math.abs(e1 - em) < e1 * 0.15,
+			`+1=${e1.toFixed(4)} -1=${em.toFixed(4)}`);
+	}
+
+	// Warmth drives the HF rolloff and the LF head bump together
+	{
+		const lo = (w) => gainAt(capture({ warmth: w }, BLOCKS, chunks(tone(80, BLOCKS, 0.2))), 80, 0.2);
+		const hi = (w) => gainAt(capture({ warmth: w }, BLOCKS, chunks(tone(16000, BLOCKS, 0.2))), 16000, 0.2);
+		check('warmth lifts the head bump', lo(1) > lo(0) * 1.1, `0=${lo(0).toFixed(3)} 1=${lo(1).toFixed(3)}`);
+		check('warmth closes the HF rolloff', hi(1) < hi(0) * 0.1, `0=${hi(0).toFixed(3)} 1=${hi(1).toFixed(3)}`);
+	}
+
+	// the three Character curves must be audibly distinct, not three names for
+	// the same tanh
+	{
+		const voicing = (c) => capture(
+			{ character: c, drive: 0.5, bias: 0.5, warmth: 0.5 }, BLOCKS, chunks(tone(1005, BLOCKS, 0.3)),
+		);
+		const v = [voicing(0), voicing(1), voicing(2)];
+		const ref = rmsOf(v[0]);
+		check('the three character voicings are distinct',
+			diffOf(v[0], v[1]) > ref * 0.01 && diffOf(v[1], v[2]) > ref * 0.01 && diffOf(v[0], v[2]) > ref * 0.005,
+			`01=${(diffOf(v[0], v[1]) / ref).toExponential(2)} 12=${(diffOf(v[1], v[2]) / ref).toExponential(2)} 02=${(diffOf(v[0], v[2]) / ref).toExponential(2)}`);
+	}
+
+	// the saturator is shift-then-recentre, so a biased curve still maps zero to
+	// zero: silence in, silence out at every rail
+	{
+		let leak = 0;
+		for (const c of [0, 1, 2]) {
+			for (const b of [-1, 0, 1]) {
+				for (const w of [0, 1]) {
+					leak = Math.max(leak, worst(capture({ character: c, bias: b, warmth: w, drive: 1 }, 8)));
+				}
+			}
+		}
+		check('silence in => silence out at every rail', leak < 1e-6, `leak=${leak.toExponential(2)}`);
+	}
+
+	// HQ swaps point-sampling for ADAA1 inside the oversampler. It can only
+	// remove folding, never add it, so the alias floor must not rise.
+	{
+		const residual = (o, f) => {
+			let re = 0;
+			let im = 0;
+			for (let i = 0; i < LEN; i++) {
+				const ph = (TAU * f * i) / SR;
+				re += o[SETTLE + i] * Math.cos(ph);
+				im += o[SETTLE + i] * Math.sin(ph);
+			}
+			const a = (2 * re) / LEN;
+			const b = (2 * im) / LEN;
+			let spurious = 0;
+			let fundamental = 0;
+			for (let i = 0; i < LEN; i++) {
+				const fit = a * Math.cos((TAU * f * i) / SR) + b * Math.sin((TAU * f * i) / SR);
+				const v = o[SETTLE + i];
+				spurious += (v - fit) ** 2;
+				fundamental += fit * fit;
+			}
+			return Math.sqrt(spurious / fundamental);
+		};
+		for (const f of [15000, 20000]) {
+			const q = (quality) => capture({ quality, drive: 1 }, BLOCKS, chunks(tone(f, BLOCKS, 0.3)));
+			const c = q(0);
+			const h = q(1);
+			check(`HQ does not raise the alias floor at ${f / 1000} kHz`,
+				residual(h, f) <= residual(c, f) * 1.1,
+				`classic=${residual(c, f).toExponential(2)} HQ=${residual(h, f).toExponential(2)}`);
+			check(`the quality switch changes the output at ${f / 1000} kHz`, diffOf(c, h) > rmsOf(c) * 1e-4,
+				`rel diff=${(diffOf(c, h) / rmsOf(c)).toExponential(2)}`);
+		}
+	}
+
+	// everything at once, at a level that would clip a naive gain stage
+	{
+		const wrecked = capture(
+			{ drive: 1, warmth: 1, bias: 1, character: 2, quality: 1, mix: 1, output: 1 },
+			BLOCKS, chunks(tone(440, BLOCKS, 3)),
+		);
+		const p = worst(wrecked);
+		check('all rails stay finite and bounded', Number.isFinite(p) && p < 40, `peak=${p.toFixed(2)}`);
+		// and the output trim really is +/-24 dB on the blended signal
+		const trim = gainAt(capture({ output: -1 }, BLOCKS, chunks(tone(1005, BLOCKS, 0.02))), 1005, 0.02);
+		check('output trim is -24 dB at the bottom', Math.abs(trim - Math.pow(10, -24 / 20)) < 0.02,
+			`gain=${trim.toFixed(4)} want=${Math.pow(10, -24 / 20).toFixed(4)}`);
+	}
+
+	// every constant is derived from `sampleRate`, so a 48 kHz instance must
+	// build and run clean too
+	{
+		const prev = globalThis.sampleRate;
+		globalThis.sampleRate = 48000;
+		const d = makeProc('pp-tapesaturation', { ...base, drive: 1, warmth: 1, bias: 1, character: 2, quality: 1 });
+		globalThis.sampleRate = prev;
+		let peak = 0;
+		let clean = true;
+		for (let b = 0; b < 200; b++) {
+			const buf = new Float32Array(BLOCK).fill(0.5);
+			const [oL, oR] = d.run(buf, buf);
+			for (const v of [oL[0], oR[0]]) {
+				if (!Number.isFinite(v)) clean = false;
+				else peak = Math.max(peak, Math.abs(v));
+			}
+		}
+		check('48 kHz instance runs clean', clean && peak < 3, `peak=${peak.toFixed(2)}`);
+	}
+}
+
 // -- pp-distortion ---------------------------------------------------------
 console.log('\npp-distortion');
 {

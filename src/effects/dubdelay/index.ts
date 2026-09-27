@@ -10,10 +10,10 @@ export default class DubDelay extends Effect {
 	/** Build the effect: create the pp-dubdelay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			feedback: { value: 0.6, max: 1, min: 0, type: 'float' },
-			time: { value: 0.7, max: 180.0, min: 0, type: 'float' },
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
-			cutoff: { value: 700, max: 4000, min: 0, type: 'integer' },
+			feedback: { value: 0.6, max: 1, min: 0, type: 'float', name: 'Feedback' },
+			time: { value: 0.7, max: 180.0, min: 0, type: 'float', name: 'Time' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
+			cutoff: { value: 700, max: 4000, min: 0, type: 'integer', name: 'Cutoff Frequency' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

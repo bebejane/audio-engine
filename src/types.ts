@@ -13,6 +13,8 @@ export interface EffectParamDef {
 	max: number | boolean;
 	min: number | boolean;
 	type: 'integer' | 'float' | 'boolean' | string;
+	/** User-facing display name for this parameter. */
+	name: string;
 }
 
 /** A catalog entry (engine.effects → EFFECTS): what can be added to a chain. */

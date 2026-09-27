@@ -30,7 +30,7 @@ by `pnpm worklet:gen`. **After editing any `source.js`, run `pnpm worklet:gen`**
 - `pnpm install`
 - `pnpm typecheck` — `tsc --noEmit`
 - `pnpm worklet:gen` / `pnpm worklet:check`
-- `pnpm test` — offline DSP harness (all 19 effect processors)
+- `pnpm test` — offline DSP harness (all 21 effect processors)
 - `pnpm docs:api` — generate the TypeDoc API reference into `docs/api/`
 
 ## Documentation
@@ -43,6 +43,28 @@ Human-readable guides live in [`docs/`](./docs/README.md):
 - [Effects catalog](./docs/effects.md)
 - [Models & presets](./docs/models-and-presets.md)
 - [Development](./docs/development.md)
+
+## Licensing
+
+This package is distributed under the **AGPL-3.0** — see [`LICENSE`](./LICENSE).
+Two effects are ports of copyleft upstream code:
+
+- `magnetictape` ports
+  [The Kiss of Shame](https://github.com/hollance/TheKissOfShame) (GPL-3.0) —
+  see [`src/effects/magnetictape/LICENSE.txt`](./src/effects/magnetictape/LICENSE.txt).
+- `tapesaturation` ports the tape-saturation stage of
+  [Aureate](https://github.com/basilica-audio/Aureate) (AGPL-3.0) —
+  see [`src/effects/tapesaturation/LICENSE.txt`](./src/effects/tapesaturation/LICENSE.txt).
+
+AGPL-3.0 is a superset of GPL-3.0 (its §13 adds only the network-use clause), so
+the two combine cleanly. Because both are copyleft, the assembled effects
+worklet — and therefore the whole distributed package — carries the AGPL-3.0.
+`tapedelay` (ISC) and `j60chorus` (ISC/MIT) are permissive; the rest is original
+to this package.
+
+Note that AGPL §13 obliges anyone who lets users interact with a modified
+version **over a network** to offer those users the corresponding source. If you
+host a modified build, read that clause first.
 
 `pnpm docs:api` renders the JSDoc into a browsable TypeDoc site at
 `docs/api/index.html` (generated, not committed).

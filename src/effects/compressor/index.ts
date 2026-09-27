@@ -10,11 +10,11 @@ export default class Compressor extends Effect {
 	/** Build the effect: create the pp-compressor worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			threshold: { value: -24, max: 0, min: -100, type: 'integer' },
-			knee: { value: 30, max: 40, min: 0, type: 'integer' },
-			attack: { value: 0, max: 1, min: 0, type: 'integer' },
-			release: { value: 0.25, max: 1, min: 0, type: 'integer' },
-			ratio: { value: 1, max: 20, min: 0, type: 'integer' },
+			threshold: { value: -24, max: 0, min: -100, type: 'integer', name: 'Threshold' },
+			knee: { value: 30, max: 40, min: 0, type: 'integer', name: 'Knee' },
+			attack: { value: 0, max: 1, min: 0, type: 'integer', name: 'Attack' },
+			release: { value: 0.25, max: 1, min: 0, type: 'integer', name: 'Release' },
+			ratio: { value: 1, max: 20, min: 0, type: 'integer', name: 'Ratio' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

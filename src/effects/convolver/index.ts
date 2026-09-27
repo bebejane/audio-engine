@@ -18,7 +18,7 @@ export default class Convolver extends Effect {
 	 */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

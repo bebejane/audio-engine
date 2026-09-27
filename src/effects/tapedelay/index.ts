@@ -22,20 +22,20 @@ export default class TapeDelay extends Effect {
 	/** Build the effect: create the pp-tapedelay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			time: { value: 220, max: 600, min: 30, type: 'float' },
-			feedback: { value: 0.5, max: 1.05, min: 0, type: 'float' },
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
-			head1: { value: true, max: true, min: false, type: 'boolean' },
-			head2: { value: false, max: true, min: false, type: 'boolean' },
-			head3: { value: false, max: true, min: false, type: 'boolean' },
-			density: { value: 1, max: 2, min: 0.5, type: 'float' },
-			wowFlutter: { value: 0.3, max: 1, min: 0, type: 'float' },
-			drive: { value: 0.3, max: 1, min: 0, type: 'float' },
-			bass: { value: 0, max: 15, min: -15, type: 'float' },
-			treble: { value: 0, max: 15, min: -15, type: 'float' },
-			hiss: { value: 0.1, max: 1, min: 0, type: 'float' },
-			tapeType: { value: 0, max: 2, min: 0, type: 'integer' },
-			age: { value: 0.2, max: 1, min: 0, type: 'float' },
+			time: { value: 220, max: 600, min: 30, type: 'float', name: 'Time' },
+			feedback: { value: 0.5, max: 1.05, min: 0, type: 'float', name: 'Feedback' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
+			head1: { value: true, max: true, min: false, type: 'boolean', name: 'Head 1' },
+			head2: { value: false, max: true, min: false, type: 'boolean', name: 'Head 2' },
+			head3: { value: false, max: true, min: false, type: 'boolean', name: 'Head 3' },
+			density: { value: 1, max: 2, min: 0.5, type: 'float', name: 'Density' },
+			wowFlutter: { value: 0.3, max: 1, min: 0, type: 'float', name: 'Wow/Flutter' },
+			drive: { value: 0.3, max: 1, min: 0, type: 'float', name: 'Drive' },
+			bass: { value: 0, max: 15, min: -15, type: 'float', name: 'Bass' },
+			treble: { value: 0, max: 15, min: -15, type: 'float', name: 'Treble' },
+			hiss: { value: 0.1, max: 1, min: 0, type: 'float', name: 'Hiss' },
+			tapeType: { value: 0, max: 2, min: 0, type: 'integer', name: 'Tape Type' },
+			age: { value: 0.2, max: 1, min: 0, type: 'float', name: 'Age' },
 		}
 		super(context, options, defaults)
 		const init = this.collectInit()

@@ -13,10 +13,10 @@ export default class Reverb extends Effect {
 	/** Build the effect: create the pp-reverb worklet node and its initial IR. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
-			time: { value: 0.001, max: 1, min: 0, type: 'float' },
-			decay: { value: 0.1, max: 10, min: 0, type: 'float' },
-			reverse: { value: false, max: true, min: false, type: 'boolean' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
+			time: { value: 0.001, max: 1, min: 0, type: 'float', name: 'Time' },
+			decay: { value: 0.1, max: 10, min: 0, type: 'float', name: 'Decay' },
+			reverse: { value: false, max: true, min: false, type: 'boolean', name: 'Reverse' },
 		}
 		super(context, options, defaults)
 		const init = this.collectInit()

@@ -11,9 +11,9 @@ export default class RingModulator extends Effect {
 	/** Build the effect: create the pp-ringmodulator worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			speed: { value: 30, max: 2000, min: 0, type: 'float' },
-			distortion: { value: 0.2, max: 50, min: 0.2, type: 'float' },
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
+			speed: { value: 30, max: 2000, min: 0, type: 'float', name: 'Speed' },
+			distortion: { value: 0.2, max: 50, min: 0.2, type: 'float', name: 'Distortion' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

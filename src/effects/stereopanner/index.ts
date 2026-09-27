@@ -9,7 +9,7 @@ export default class StereoPanner extends Effect {
 	/** Build the effect: create the pp-stereopanner worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			pan: { value: 0, max: 1, min: -1, type: 'integer' },
+			pan: { value: 0, max: 1, min: -1, type: 'integer', name: 'Pan' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

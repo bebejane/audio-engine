@@ -11,10 +11,10 @@ export default class Quadrafuzz extends Effect {
 	/** Build the effect: create the pp-quadrafuzz worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			lowGain: { value: 0.6, max: 1, min: 0, type: 'float' },
-			midLowGain: { value: 0.8, max: 1, min: 0, type: 'float' },
-			midHighGain: { value: 0.5, max: 1, min: 0, type: 'float' },
-			highGain: { value: 0.6, max: 1, min: 0, type: 'float' },
+			lowGain: { value: 0.6, max: 1, min: 0, type: 'float', name: 'Low Gain' },
+			midLowGain: { value: 0.8, max: 1, min: 0, type: 'float', name: 'Low-Mid Gain' },
+			midHighGain: { value: 0.5, max: 1, min: 0, type: 'float', name: 'High-Mid Gain' },
+			highGain: { value: 0.6, max: 1, min: 0, type: 'float', name: 'High Gain' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

@@ -11,11 +11,11 @@ export default class Flanger extends Effect {
 	/** Build the effect: create the pp-flanger worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			time: { value: 0.45, max: 1, min: 0, type: 'float' },
-			speed: { value: 0.2, max: 1, min: 0, type: 'float' },
-			depth: { value: 0.1, max: 1, min: 0, type: 'float' },
-			feedback: { value: 0.5, max: 1, min: 0, type: 'float' },
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
+			time: { value: 0.45, max: 1, min: 0, type: 'float', name: 'Delay Time' },
+			speed: { value: 0.2, max: 1, min: 0, type: 'float', name: 'LFO Rate' },
+			depth: { value: 0.1, max: 1, min: 0, type: 'float', name: 'Depth' },
+			feedback: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Feedback' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

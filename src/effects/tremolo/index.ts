@@ -10,9 +10,9 @@ export default class Tremolo extends Effect {
 	/** Build the effect: create the pp-tremolo worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			speed: { value: 4, max: 20, min: 0, type: 'integer' },
-			depth: { value: 0.5, max: 1, min: 0, type: 'float' },
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
+			speed: { value: 4, max: 20, min: 0, type: 'integer', name: 'Speed' },
+			depth: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Depth' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

@@ -11,9 +11,9 @@ export default class Delay extends Effect {
 	/** Build the effect: create the pp-delay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			feedback: { value: 0.5, max: 1, min: 0, type: 'float' },
-			time: { value: 0.1, max: 1.0, min: 0, type: 'float' },
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
+			feedback: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Feedback' },
+			time: { value: 0.1, max: 1.0, min: 0, type: 'float', name: 'Time' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

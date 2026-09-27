@@ -19,9 +19,9 @@ export default class J60Chorus extends Effect {
 	/** Build the effect: create the pp-j60chorus worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			chorusI: { value: false, max: true, min: false, type: 'boolean' },
-			chorusII: { value: true, max: true, min: false, type: 'boolean' },
-			mix: { value: 1, max: 1, min: 0, type: 'float' },
+			chorusI: { value: false, max: true, min: false, type: 'boolean', name: 'Chorus I' },
+			chorusII: { value: true, max: true, min: false, type: 'boolean', name: 'Chorus II' },
+			mix: { value: 1, max: 1, min: 0, type: 'float', name: 'Mix' },
 		}
 		super(context, options, defaults)
 		const init = this.collectInit()

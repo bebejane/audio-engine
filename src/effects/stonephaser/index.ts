@@ -17,12 +17,12 @@ export default class StonePhaser extends Effect {
 	/** Build the effect: create the pp-stonephaser worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			speed: { value: 0.2, max: 5, min: 0.01, type: 'float' },
-			feedback: { value: 0.75, max: 0.99, min: 0, type: 'float' },
-			feedbackBassCut: { value: 500, max: 5000, min: 10, type: 'integer' },
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
-			color: { value: true, max: true, min: false, type: 'boolean' },
-			phase: { value: 0, max: 180, min: -180, type: 'integer' },
+			speed: { value: 0.2, max: 5, min: 0.01, type: 'float', name: 'Speed' },
+			feedback: { value: 0.75, max: 0.99, min: 0, type: 'float', name: 'Feedback' },
+			feedbackBassCut: { value: 500, max: 5000, min: 10, type: 'integer', name: 'Feedback Bass Cut' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
+			color: { value: true, max: true, min: false, type: 'boolean', name: 'Color' },
+			phase: { value: 0, max: 180, min: -180, type: 'integer', name: 'Phase' },
 		}
 		super(context, options, defaults)
 		const init = this.collectInit()

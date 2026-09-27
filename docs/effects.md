@@ -25,10 +25,35 @@ values. Most setters smooth the change (`setTargetAtTime`) or ramp it; a few
 (`dubdelay`, `flanger`, `quadrafuzz`, `stereopanner`, `tapedelay`) write the
 AudioParam directly.
 
+Every catalog param is an `EffectParamDef` — `value` / `min` / `max` / `type`
+plus a user-facing `name` (the label the UI shows for that control). The
+`name` is required, so any new param must declare one.
+
 > The worklet module is assembled from the `source.js` files into
 > `src/effects/workletsource.generated.ts`. **After editing any `source.js`, run
 > `pnpm worklet:gen`** (`pnpm worklet:check` fails if the generated file is
 > stale).
+
+## Licensing
+
+Two effects are ports of copyleft upstream code:
+
+- `magnetictape` ports [The Kiss of Shame][kos], which is **GPL-3.0** — see
+  [`src/effects/magnetictape/LICENSE.txt`](../src/effects/magnetictape/LICENSE.txt).
+- `tapesaturation` ports the tape-saturation stage of [Aureate][aureate], which
+  is **AGPL-3.0** — see
+  [`src/effects/tapesaturation/LICENSE.txt`](../src/effects/tapesaturation/LICENSE.txt).
+
+AGPL-3.0 is a superset of GPL-3.0 (its §13 adds only the network-use clause), so
+the GPL-3.0 component combines cleanly. Both are copyleft, so the assembled
+effects worklet — and therefore the distributed package — is an **AGPL-3.0**
+work; see the repository-root [`LICENSE`](../LICENSE). Note that §13 obliges
+anyone who lets users interact with a modified version *over a network* to offer
+those users the corresponding source, which is the clause to check before
+hosting a modified build.
+
+`tapedelay` (ISC) and `j60chorus` (ISC/MIT) are permissively licensed; the
+remaining effects are original to this package.
 
 ## Catalog
 
@@ -120,6 +145,44 @@ and post to the worklet. The dry path stays live until the impulse arrives.
 | `frequency` | `350` | `10 … 22050` Hz |
 | `peak` | `0.0001` | `0 … 1000` |
 
+### Magnetic Tape Emulation — `magnetictape`
+
+The tape desecration chain from [The Kiss of Shame][kos]
+(`hollance/TheKissOfShame`, GPL-3.0 — see
+[`src/effects/magnetictape/LICENSE.txt`](../src/effects/magnetictape/LICENSE.txt)).
+A per-sample chain: input drive → odd/even harmonic saturation behind a 4 kHz
+one-pole → flange → the `age` macro → hiss → `shame` → linear dry/wet →
+output level.
+
+| Param | Default | Range | Notes |
+| --- | --- | --- | --- |
+| `inputDrive` | `0.5` | `0 … 1` | −18 … +18 dB. Drives how hard the saturation stage works. |
+| `outputLevel` | `0.5` | `0 … 1` | −18 … +18 dB. |
+| `shame` | `0` | `0 … 1` | Wow/flutter chaos — modulated delay depth, rate and randomness. |
+| `age` | `0` | `0 … 1` | Storage-environment macro: lowpass sweep 20 k→2 kHz, granular noise, random level dips, noise bursts above 0.5. |
+| `hiss` | `0` | `0 … 1` | Tape hiss up to −46 dB (the dry path is trimmed to match). |
+| `mix` | `1` | `0 … 1` | Linear dry/wet. 0 = clean dry, 1 = the full chain. |
+| `flange` | `0` | `0 … 1` | Modulated delay depth; 1 ≈ 1000 samples. 0 = steady. |
+
+Two things worth knowing before reaching for it. **The saturation stage is
+unconditional**, so the effect is audible at its defaults even with
+`shame`/`age`/`hiss` at zero — it is a tape machine, not a damage unit, and
+`mix` defaults to `1` for that reason. And the three noise sources the original
+loaded from bundled WAV files (`Hiss.wav` 12.7 MB, `PinkNoise.wav` 3.8 MB,
+`LowLevelGrainNoise.wav` 7.0 MB) are **synthesised procedurally** here, so the
+hiss and grain beds are plausible rather than authentic.
+
+The upstream plugin only behaves correctly at 44100 Hz — it hardcodes its buffer
+sizes, envelope domains and modulation depths. This port derives all of them
+from the real `sampleRate`, so it holds at 48 kHz and above.
+
+Not ported: `tapeType` and `environment` are dead upstream (the tape-type button
+"has no effect" and only the Hurricane Sandy environment is implemented), and
+`printThrough` is never implemented.
+
+[kos]: https://github.com/hollance/TheKissOfShame
+[aureate]: https://github.com/basilica-audio/Aureate
+
 ### PingPong Delay — `pingpongdelay`
 
 | Param | Default | Range |
@@ -194,6 +257,42 @@ Roland RE-201-style multi-head tape echo (heads at t, 2t, 3t).
 | `tapeType` | `0` | `0 … 2` | `0` I (ferric), `1` II (chrome), `2` IV (metal). |
 | `age` | `0.2` | `0 … 1` | HF self-erasure / dropout / bias-sag macro. |
 
+### Tape Saturation — `tapesaturation`
+
+The tape-saturation stage of [Aureate][aureate]
+(`basilica-audio/Aureate`, AGPL-3.0 — see
+[`src/effects/tapesaturation/LICENSE.txt`](../src/effects/tapesaturation/LICENSE.txt)).
+Input Drive → 4× oversampled [Warmth HF rolloff → 80 Hz head bump → asymmetric
+Character saturator] → dry/wet → output trim.
+
+| Param | Default | Range | Notes |
+| --- | --- | --- | --- |
+| `drive` | `0.25` | `0 … 1` | 0 … +24 dB into the saturator. |
+| `warmth` | `0.35` | `0 … 1` | Tape self-erasure rolloff (20 k → 3 kHz) plus an 80 Hz head bump, up to +1.5 dB. Also contributes Bias, scaled per Character. |
+| `bias` | `0` | `-1 … 1` | Shifts the saturator's operating point. Combined with Warmth's contribution and clamped to ±0.9. |
+| `character` | `0` | `0 … 2` | `0` Tape (tanh), `1` Console (2·tanh(v/2)), `2` Valve (sign·(1−e^−\|v\|)). |
+| `quality` | `true` | boolean | `true` = ADAA1 inside the oversampler (lower alias floor); `false` = point-sampled. |
+| `mix` | `1` | `0 … 1` | Dry/wet. |
+| `output` | `0` | `-1 … 1` | −24 … +24 dB on the blended signal. |
+
+The nonlinearity is shift-then-recentre, `y = f(x + bias) − f(bias)`, which is
+what makes it genuinely asymmetric — the two half-cycles approach different
+ceilings, so a zero-mean input comes out even-harmonic-rich. Subtracting
+`f(bias)` is what keeps silence silent at every bias setting. `warmth` at 0 is a
+20 kHz Butterworth, not a bypass, so the wet path has a gentle HF droop even
+when "off"; that matches upstream.
+
+Two deviations from the C++ original, both deliberate and both documented in
+`source.js`: the 4× oversampler is two cascaded linear-phase half-band FIR
+stages rather than JUCE's polyphase half-band IIR (an IIR resampler is not
+portable to an AudioWorklet), and Aureate's host-reported latency is replaced by
+a fixed 48-sample delay on the dry side of the mix so that `mix = 0` is an exact
+phase-aligned passthrough. The Warmth/head-bump biquads add a further sub-sample
+delay of their own that is **not** compensated, again matching upstream.
+
+Not ported: the glue compressor, iron transformer, wow/flutter, hiss, HF/LF
+trim and auto gain — those are separate instruments in Aureate.
+
 ### Tremolo — `tremolo`
 
 | Param | Default | Range |
@@ -206,9 +305,13 @@ Roland RE-201-style multi-head tape echo (heads at t, 2t, 3t).
 
 1. Create `src/effects/<id>/source.js` with the DSP (`registerProcessor('pp-<id>', …)`).
 2. Create `src/effects/<id>/index.ts` with an `Effect` subclass: declare
-   `defaults`, build the node via `createWorkletEffectNode(context, 'pp-<id>',
+   `defaults` (each param's `EffectParamDef` needs a user-facing `name`), build
+   the node via `createWorkletEffectNode(context, 'pp-<id>',
    this.collectInit())`, then call `this.initParams()` and add parameter
    getters/setters.
 3. Add the catalog entry to `EFFECTS` and the class to `EFFECT_CLASSES` in
    `src/effects/index.ts`.
 4. Run `pnpm worklet:gen` and `pnpm test`.
+5. Document it in the catalog above, and — if the DSP is a port of someone
+   else's plugin — add `src/effects/<id>/LICENSE.txt` carrying the upstream
+   attribution and license text, following `magnetictape` and `tapesaturation`.

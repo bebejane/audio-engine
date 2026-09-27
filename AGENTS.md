@@ -1,12 +1,12 @@
 # AGENTS.md
 
 Guidance for AI coding agents working in this repository. Human-facing docs
-live in [`docs/`](./docs/README.md); this file is about *how to change the code
-safely*.
+live in [`docs/`](./docs/README.md); this file is about _how to change the code
+safely_.
 
 ## What this is
 
-`audio-engine` is the PurplePurples Web Audio sampler / sequencer / mixer,
+`audio-engine` is a Web Audio sampler / sequencer / mixer,
 extracted so it can be consumed as a package. The package ships **TypeScript
 source** — there is no build/emit step and no bundler; the consumer transpiles
 `src/*.ts` (Next.js: `transpilePackages: ['audio-engine']`). Do not introduce a
@@ -88,9 +88,9 @@ typedoc.json / docs/                documentation
    Do not "fix" it.
 
 7. **`pnpm test` behavior covers DSP, not UI.** It loads the generated worklet
-   source into a shim and runs all 19 processors offline. Run it after any DSP or
+   source into a shim and runs all 21 processors offline. Run it after any DSP or
    effect change. Comments/typing-only edits do not require it, but `pnpm
-   typecheck` should always pass.
+typecheck` should always pass.
 
 ## Effects
 

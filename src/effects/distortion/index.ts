@@ -10,7 +10,7 @@ export default class Distortion extends Effect {
 	/** Build the effect: create the pp-distortion worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			gain: { value: 0.5, max: 1, min: 0, type: 'float' },
+			gain: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Gain' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

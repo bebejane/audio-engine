@@ -5,7 +5,7 @@
 ```sh
 pnpm install
 pnpm typecheck      # tsc --noEmit
-pnpm test           # offline DSP harness (all 19 effect processors)
+pnpm test           # offline DSP harness (all 21 effect processors)
 pnpm worklet:gen    # regenerate src/effects/workletsource.generated.ts
 pnpm worklet:check  # fail if the generated worklet source is stale
 pnpm docs:api       # generate the TypeDoc site into docs/api/
@@ -61,7 +61,7 @@ hand-written guides live alongside this file.
 ## Testing
 
 `tests/verify-effects.mjs` loads the generated worklet source into a minimal
-AudioWorklet shim and runs each of the 19 processors offline, checking for
+AudioWorklet shim and runs each of the 21 processors offline, checking for
 finite output, silence handling and known DSP behaviours (e.g. delay tails).
 Run it after any DSP change.
 

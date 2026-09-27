@@ -10,9 +10,9 @@ export default class PingPongDelay extends Effect {
 	/** Build the effect: create the pp-pingpongdelay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
-			feedback: { value: 0.5, max: 1, min: 0, type: 'float' },
-			time: { value: 0.3, max: 1, min: 0, type: 'float' },
-			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
+			feedback: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Feedback' },
+			time: { value: 0.3, max: 1, min: 0, type: 'float', name: 'Time' },
+			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
 		}
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(

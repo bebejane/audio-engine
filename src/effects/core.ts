@@ -15,6 +15,8 @@ export interface EffectParamDef {
 	max: number | boolean;
 	min: number | boolean;
 	type: 'float' | 'integer' | 'boolean';
+	/** User-facing display name for this parameter. */
+	name: string;
 }
 
 export type EffectDefaults = Record<string, EffectParamDef>;
@@ -116,8 +118,8 @@ export abstract class FilterEffect extends Effect {
 		processorId: string,
 	) {
 		const defaults: EffectDefaults = {
-			frequency: { value: 350, max: 22050, min: 10, type: 'integer' },
-			peak: { value: 0.0001, max: 1000, min: 0, type: 'float' },
+			frequency: { value: 350, max: 22050, min: 10, type: 'integer', name: 'Frequency' },
+			peak: { value: 0.0001, max: 1000, min: 0, type: 'float', name: 'Peak' },
 		};
 		super(context, options, defaults);
 		this.inputNode =
@@ -176,8 +178,8 @@ export abstract class Korg35FilterEffect extends Effect {
 		processorId: string,
 	) {
 		const defaults: EffectDefaults = {
-			cutoff: { value: 350, max: 20000, min: 20, type: 'integer' },
-			q: { value: 1, max: 10, min: 0.5, type: 'float' },
+			cutoff: { value: 350, max: 20000, min: 20, type: 'integer', name: 'Cutoff' },
+			q: { value: 1, max: 10, min: 0.5, type: 'float', name: 'Q' },
 		};
 		super(context, options, defaults);
 		this.inputNode =
