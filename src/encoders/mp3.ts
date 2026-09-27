@@ -6,11 +6,22 @@
 import { createMp3Encoder as createMp3EncoderFn } from "wasm-media-encoders"
 import lamejs from 'lamejs'
 
+/** Resolve after `ms` milliseconds (used to yield to the UI while encoding). */
 const sleep = (ms)=>{
     const p = new Promise((resolve, reject)=>setTimeout(()=>resolve(), ms))
     return p;
 }
 
+/**
+ * Encode per-channel Float32 PCM to an mp3 Blob.
+ *
+ * Dispatches to the WASM encoder (`wasm-media-encoders`); the pure-JS lamejs
+ * variants below are kept as fallbacks but are currently unreachable (the WASM
+ * path returns first).
+ *
+ * @param samples - one or two channel sample arrays.
+ * @param opt - sample rate, channel count and bitrate.
+ */
 const mp3Encoder = (samples, opt = { sampleRate: 44100, numChannels: 2, bitrate:192 }) => {
     return mp3EncoderWASM(samples, opt)
     if(opt.numChannels === 2)
@@ -64,6 +75,7 @@ const mp3Encoder = (samples, opt = { sampleRate: 44100, numChannels: 2, bitrate:
     })
 };
 
+/** lamejs stereo fallback encoder (unused while the WASM path is active). */
 const mp3EncoderStereo = (samples, opt = { sampleRate: 44100, numChannels: 2, bitrate:192 })=> {
 
     return new Promise(async (resolve, reject)=>{
@@ -114,6 +126,7 @@ const mp3EncoderStereo = (samples, opt = { sampleRate: 44100, numChannels: 2, bi
     })
 };
 
+/** WASM mp3 encoder path (wasm-media-encoders); posts progress, resolves a Blob. */
 const mp3EncoderWASM = (samples, opt = { sampleRate: 44100, numChannels: 2, bitrate:192 })=>{
     return new Promise((resolve, reject)=>{
         console.log('loading encoder')

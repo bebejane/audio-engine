@@ -1,8 +1,21 @@
+/** Options for the WAV encoder. */
 export interface WavOptions {
+	/** Sample rate written into the fmt chunk (default 44100). */
 	sampleRate?: number;
+	/** 1 for mono, 2 for interleaved stereo (default 2). */
 	numChannels?: number;
 }
 
+/**
+ * Encode per-channel Float32 PCM as a 16-bit PCM little-endian WAV Blob.
+ *
+ * Runs on the main thread but is invoked from the encoder worker
+ * (encoders/worker.ts) for both recording and export. Resolves with the Blob;
+ * rejects if the RIFF header or sample conversion throws.
+ *
+ * @param buffer - one or two channel sample arrays (channel 0 drives mono).
+ * @param opt - sample rate and channel count.
+ */
 const wavEncoder = (
 	buffer: Float32Array[],
 	opt: WavOptions = { sampleRate: 44100, numChannels: 2 },
@@ -16,6 +29,7 @@ const wavEncoder = (
 		}
 	})
 
+	/** Interleave left/right channels into one L,R,L,R Float32 stream. */
 	function interleave(inputL: Float32Array, inputR: Float32Array): Float32Array {
 		const length = inputL.length + inputR.length;
 		const result = new Float32Array(length);
@@ -30,6 +44,7 @@ const wavEncoder = (
 		}
 		return result;
 	}
+	/** Write Float32 samples as clamped 16-bit signed PCM at `offset`. */
 	function floatTo16BitPCM(output: DataView, offset: number, input: Float32Array): void {
 		for (let i = 0; i < input.length; i++, offset += 2) {
 			const s = Math.max(-1, Math.min(1, input[i]));
@@ -37,12 +52,14 @@ const wavEncoder = (
 		}
 	}
 
+	/** Write an ASCII string into the DataView at `offset` (WAV chunk tags). */
 	function writeString(view: DataView, offset: number, string: string): void {
 		for (let i = 0; i < string.length; i++) {
 			view.setUint8(offset + i, string.charCodeAt(i));
 		}
 	}
 
+	/** Build the 44-byte RIFF/fmt header + PCM body for `samples`. */
 	function encodeWAV(
 		samples: Float32Array[],
 		opt: WavOptions = { sampleRate: 44100, numChannels: 2 },

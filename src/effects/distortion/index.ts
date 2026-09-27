@@ -7,6 +7,7 @@ import { createWorkletEffectNode } from '../worklet'
  * `adjustGain`/StackOverflow waveshaper runs in the pp-distortion worklet.
  */
 export default class Distortion extends Effect {
+	/** Build the effect: create the pp-distortion worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			gain: { value: 0.5, max: 1, min: 0, type: 'float' },

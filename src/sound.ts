@@ -139,6 +139,16 @@ export interface SoundOptions extends Record<string, any> {
 	enableElapsed?: boolean;
 }
 
+/**
+ * One sampler cell: owns an AudioBufferSourceNode + a volume/fade/panner chain
+ * and an ordered effect chain, and emits `state`/`*<id>` events the engine
+ * forwards.
+ *
+ * A Sound is created by `AudioEngine.add()`/`createSound()` and usually lives
+ * for one grid cell. Its many `_<name>` fields mirror the `SoundDefaults`
+ * settings and are what `getSaveState()` / presets serialize.
+ * Nodes are rebuilt on every `play()` (Web Audio sources are one-shot).
+ */
 class Sound extends EventEmitter {
 	DEBUG: boolean;
 	id: string;
@@ -294,6 +304,15 @@ class Sound extends EventEmitter {
 		this._pitchPending = false;
 		this.onEnded = this.onEnded.bind(this);
 	}
+	/**
+	 * Start playback: build a fresh source, connect the chain (unless muted or
+	 * filtered out by solo), apply rate/loop/fades and start the elapsed ticker.
+	 *
+	 * No-op until the buffer has loaded. If paused, resumes instead of
+	 * restarting (see {@link pause}).
+	 *
+	 * @param options - start offset/duration, fades, optional volume override.
+	 */
 	play(options: Partial<PlayOptions> = {}) {
 		const opt: PlayOptions = {
 			start: 0,
@@ -360,6 +379,11 @@ class Sound extends EventEmitter {
 		}
 		//console.log('play', this._offset, 'muted', this._muted, 'loop', this._loopStart + ' > ' + this._loopEnd, 'dur=', opt.duration, opt.fadeIn, opt.fadeOut)
 	}
+	/**
+	 * (Re)build the audio graph from the source through the optional pitch node,
+	 * the non-bypassed effects, the volume node, fade node and panner into the
+	 * master gain.
+	 */
 	_connectChain() {
 		if (!this.source) return;
 
@@ -388,6 +412,7 @@ class Sound extends EventEmitter {
 		this.panner.connect(this.engine.masterGain);
 		this._connected = true;
 	}
+	/** Tear down every connection made by {@link _connectChain}. */
 	_disconnectChain() {
 		if (this._connected) {
 			const effects = this.effects;
@@ -406,6 +431,10 @@ class Sound extends EventEmitter {
 		}
 		this._connected = false;
 	}
+	/**
+	 * Append an already-built effect (see AudioEngine.addEffect) to the chain.
+	 * Effects are added bypassed by default; `bypass: false` enables it at once.
+	 */
 	addEffect(type: string, eff: Effect, bypass?: boolean): EffectParamEntry {
 		const idx = this.effects.length;
 		const effect: EffectSlot = {
@@ -486,6 +515,7 @@ class Sound extends EventEmitter {
 				console.error('failed to create effect', e.type, err);
 			});
 	}
+	/** Get the effect slot at `idx`; with `bypass` set it enables/disables it. */
 	effectBypass(idx: number, bypass?: boolean): EffectSlot {
 		if (idx < 0 || idx > this.effects.length - 1 || !this.effects[idx])
 			throw new Error('effect not found at idx=' + idx);
@@ -499,6 +529,7 @@ class Sound extends EventEmitter {
 		this._emit('effectbypass', idx, bypass);
 		return e;
 	}
+	/** Remove the effect at `idx`, re-index the rest and return the new chain. */
 	removeEffect(idx: number): EffectParamEntry | EffectParamEntry[] {
 		const effects = this.effects.filter((e, i) => i !== idx);
 		effects.forEach((eff, idx) => (eff.idx = idx));
@@ -508,6 +539,7 @@ class Sound extends EventEmitter {
 		this._emit('removeeffect', idx);
 		return this._currentEffectParams();
 	}
+	/** Move the effect at `idx` to `toIdx`, re-index and return the new chain. */
 	moveEffect(id: string, idx: number, toIdx: number): EffectParamEntry | EffectParamEntry[] {
 		this.effects = arrayMoveImmutable(this.effects, idx, toIdx);
 		this.effects.forEach((e, idx) => (e.idx = idx));
@@ -519,6 +551,11 @@ class Sound extends EventEmitter {
 		return this._currentEffectParams();
 	}
 
+	/**
+	 * Read (no `params`) or write one effect's parameters. Writing pushes only
+	 * the supplied keys through the effect's setters (or the pending values
+	 * before materialization) and emits `effectparams`.
+	 */
 	effectParams(idx?: number, params?: Record<string, any>): EffectParamEntry | EffectParamEntry[] {
 		if (params === undefined && idx === undefined) return this._currentEffectParams();
 		if (idx !== undefined && !this.effects[idx]) return {} as EffectParamEntry;
@@ -540,6 +577,7 @@ class Sound extends EventEmitter {
 		this._emit('effectparams', newParams);
 		return newParams;
 	}
+	/** Bypass the whole chain without losing per-effect bypass states. */
 	disableEffects() {
 		this.effects.forEach((e, idx) => (e.bypassed = true));
 		this._invalidateEffects();
@@ -547,6 +585,7 @@ class Sound extends EventEmitter {
 		this._effectsEnabled = false;
 		this._emit('effectsenabled', false);
 	}
+	/** Un-bypass every effect (materializing any pending nodes) and reconnect. */
 	enableEffects() {
 		this.effects.forEach((e, idx) => {
 			e.bypassed = false;
@@ -558,6 +597,11 @@ class Sound extends EventEmitter {
 		this._connectChain();
 		this._emit('effectsenabled', true);
 	}
+	/**
+	 * Ramp the volume node from `fromVolume` to `toVolume` over `time` seconds.
+	 * `type` selects the ramp shape (linear/exponential/logarithmic/scurve; the
+	 * non-linear names currently map to a linear ramp).
+	 */
 	fadeIn(time: number, type: string, fromVolume: number, toVolume: number): void {
 		this.node.gain.setValueAtTime(fromVolume, this.context.currentTime);
 		const endTime = this.context.currentTime + time - 0.001;
@@ -569,6 +613,10 @@ class Sound extends EventEmitter {
 
 		//console.log('fadein', time, type, fromVolume, toVolume,this.context.currentTime,time)
 	}
+	/**
+	 * Schedule a fade to `toVolume` that begins `offset - time` seconds from now
+	 * (i.e. it completes at `offset`). Replaces any pending fade-out.
+	 */
 	fadeOut(time: number, type: string, toVolume: number, offset = 0): void {
 		const delay = time > offset ? 0 : offset - time;
 		clearTimeout(this.fadeOutTimeout);
@@ -587,6 +635,7 @@ class Sound extends EventEmitter {
 	_invalidateEffects() {
 		this._effectsCache = null;
 	}
+	/** Serialize one chain slot (live params, or pending values before materialization). */
 	_effectEntry(e: EffectSlot, idx: number): EffectParamEntry {
 		return {
 			idx,
@@ -598,8 +647,16 @@ class Sound extends EventEmitter {
 			defaults: e.defaults,
 		};
 	}
+	/**
+	 * Serialized effect chain snapshot: one entry with an index, or the whole
+	 * array (memoized until the next mutation — see `_effectsCache`).
+	 */
 	_currentEffectParams(): EffectParamEntry[];
 	_currentEffectParams(idx: number): EffectParamEntry;
+	/**
+	 * Implementation of the two overloads above; see `_currentEffectParams()`
+	 * and `_currentEffectParams(idx)`.
+	 */
 	_currentEffectParams(idx?: number): EffectParamEntry | EffectParamEntry[] {
 		if (idx !== undefined) {
 			const e = this.effects[idx];
@@ -612,6 +669,7 @@ class Sound extends EventEmitter {
 			this._effectsCache = this.effects.map((e, i) => this._effectEntry(e, i));
 		return this._effectsCache;
 	}
+	/** Tick the playhead (~30ms) while playing, wrapping inside the loop region. */
 	_checkElapsed() {
 		if (!this._playing || this._paused) return;
 		let el = this.context.currentTime - this._startedAt + this._offset;
@@ -627,6 +685,7 @@ class Sound extends EventEmitter {
 		this.emit('elapsed', this._elapsed);
 		this.elapseTimeout = setTimeout(() => this._checkElapsed(), 30);
 	}
+	/** Stop the elapsed ticker and reset the playhead to 0. */
 	_clearElapsed() {
 		clearTimeout(this.elapseTimeout);
 		this._elapsed = 0;
@@ -677,6 +736,7 @@ class Sound extends EventEmitter {
 		return now + (len - into) / this._rate;
 	}
 
+	/** Per-tick job: fire any wrapped `loopend` events and top up the fade envelope. */
 	_loopTick() {
 		if (!this._playing || this._paused || this._cycle <= 0) return this._clearLoopScheduler();
 		const now = this.context.currentTime;
@@ -703,6 +763,11 @@ class Sound extends EventEmitter {
 			this._scheduleLoopFades(this._fadeScheduledUntil, false);
 	}
 
+	/**
+	 * Schedule the next four loop-boundary fade envelopes on `fadeNode.gain`
+	 * (fade to ~0 at the wrap, back to 1 after). `startNow` also covers the
+	 * click at the start of playback.
+	 */
 	_scheduleLoopFades(from: number, startNow: boolean): void {
 		if (!this.fadeNode) return;
 		const g = this.fadeNode.gain;
@@ -736,6 +801,7 @@ class Sound extends EventEmitter {
 		g.setValueAtTime(1, t);
 	}
 
+	/** Stop the loop ticker and release the fade envelope back to unity gain. */
 	_clearLoopScheduler() {
 		clearInterval(this._loopTimer);
 		this._loopTimer = null;
@@ -747,6 +813,7 @@ class Sound extends EventEmitter {
 			g.setTargetAtTime(1, this.context.currentTime, 0.01);
 		} catch (e) {}
 	}
+	/** Stop playback: clear timers, halt the source and emit ended/stop/playing. */
 	stop() {
 		if (!this.source) return;
 
@@ -766,10 +833,16 @@ class Sound extends EventEmitter {
 		this._emit('stop');
 		this._emit('playing', false);
 	}
+	/** Emit both the `state` snapshot and the `<event>` event (with this id). */
 	_emit(event: string, val?: unknown, val2?: unknown): void {
 		this.emitState(event, val);
 		this.emit(event, this.id, val, val2);
 	}
+	/**
+	 * Emit the full `state` snapshot. An object `val` is merged into the `_`
+	 * fields (the object form of `_emit`), otherwise `val` is recorded under the
+	 * event key. The `effects` chain is only included for chain-changing events.
+	 */
 	emitState(event: string, val?: unknown): void {
 		const updated: Record<string, unknown> = {};
 		if (typeof val === 'object') {
@@ -822,6 +895,7 @@ class Sound extends EventEmitter {
 			updated,
 		);
 	}
+	/** Serialize the settings that survive a save/load or preset round-trip. */
 	getSaveState() {
 		return {
 			volume: this._volume,
@@ -844,6 +918,7 @@ class Sound extends EventEmitter {
 			effects: this._currentEffectParams(),
 		};
 	}
+	/** Stop, reset every setting to its default and re-apply them to the graph. */
 	reset() {
 		const { _duration, _loaded, _ready } = this;
 
@@ -878,6 +953,7 @@ class Sound extends EventEmitter {
 		this._emit('reset', this.id);
 	}
 
+	/** Source `ended` handler: clear playing (non-loop) and re-emit `ended`. */
 	onEnded() {
 		this._startedAt = 0;
 		if (!this._loop) {
@@ -886,6 +962,11 @@ class Sound extends EventEmitter {
 		}
 		this.emit('ended');
 	}
+	/**
+	 * Pause (`on = true`) or resume playback. Pausing stops the source and
+	 * remembers the position; resuming calls `play({ start: pausedAt })`.
+	 * @returns the resulting paused flag.
+	 */
 	pause(on?: boolean): boolean {
 		if (on) {
 			// stop fades/loopend while paused; resume (play) re-arms them
@@ -909,6 +990,7 @@ class Sound extends EventEmitter {
 		return this._paused;
 	}
 
+	/** Restart playback at `sec` seconds (pause then play from that offset). */
 	jump(sec: number): void {
 		const nextTime = this.context.currentTime - this._startedAt + sec * 1;
 		this.pause();
@@ -916,6 +998,10 @@ class Sound extends EventEmitter {
 			start: nextTime >= 0 ? nextTime : 0,
 		});
 	}
+	/**
+	 * Get the mute flag (no arg) or set it. Muting ramps the output gain to 0
+	 * rather than rewiring the graph (avoids clicks during fast toggles).
+	 */
 	mute(on?: boolean): boolean | void {
 		if (on === undefined) return this._muted;
 		if (this._muted === on) return;
@@ -938,18 +1024,24 @@ class Sound extends EventEmitter {
 		this.node.gain.setTargetAtTime(this._targetGain(), this.context.currentTime, 0.02);
 	}
 
+	/** Get (no arg) or set the channel volume (0–1); always re-applies the gain. */
 	volume(vol?: number): number {
 		if (vol !== undefined) this._volume = vol;
 		this._applyGain();
 		this._emit('volume', this._volume);
 		return this._volume;
 	}
+	/** Get (no arg) or set the additive gain applied on top of volume (see `_targetGain`). */
 	gain(gain?: number): number {
 		if (gain !== undefined) this._gain = gain;
 		this._applyGain();
 		this._emit('gain', this._gain);
 		return this._gain;
 	}
+	/**
+	 * Get (no arg) or set the playback rate. While playing, a set rate is
+	 * ramped on the source and the loop scheduler is re-anchored.
+	 */
 	rate(rate?: number): number {
 		if (rate !== undefined && this.source && this._rate !== rate) {
 			this.source.playbackRate.cancelScheduledValues(this.context.currentTime);
@@ -1043,6 +1135,11 @@ class Sound extends EventEmitter {
 		return this._pitchNode;
 	}
 
+	/**
+	 * Set the stereo pan in degrees (-90 = hard left, 90 = hard right) on the
+	 * panner, moving both position axes together.
+	 * @returns the computed `{ x, z }` panner position.
+	 */
 	pan(deg: number): { x: number; z: number } {
 		var xDeg = parseInt(String(deg));
 		var zDeg = xDeg + 90;
@@ -1076,6 +1173,10 @@ class Sound extends EventEmitter {
 			z: z,
 		};
 	}
+	/**
+	 * Get the loop flag (no arg) or enable/disable looping with optional
+	 * `{ start, end }` bounds (seconds). Restarts the anti-click scheduler.
+	 */
 	loop(on?: boolean, offset: { start?: number; end?: number } = {}): boolean {
 		if (on === undefined) return this._loop;
 		this._loopStart =
@@ -1102,6 +1203,10 @@ class Sound extends EventEmitter {
 		return this._loop;
 	}
 
+	/**
+	 * Get the reversed flag (no arg) or reverse/un-reverse the decoded buffer in
+	 * place. Bumps the buffer version so cached peaks are invalidated.
+	 */
 	reverse(on?: boolean): unknown {
 		if (on === undefined) return this._reverse;
 		if (!this.buffer) return;
@@ -1112,6 +1217,10 @@ class Sound extends EventEmitter {
 		this._emit('reversed', on);
 		this.emit('change');
 	}
+	/**
+	 * Replace the buffer with the `[start, end)` seconds range (mono, channel 0),
+	 * bump the version and emit the new duration.
+	 */
 	crop(start: number, end: number): void {
 		const s = Math.floor(start * this.sampleRate);
 		const e = Math.floor(end * this.sampleRate);
@@ -1130,6 +1239,10 @@ class Sound extends EventEmitter {
 		this.emit('change');
 	}
 
+	/**
+	 * Get the solo flag (no arg) or set it. `mute` (optional) also applies the
+	 * mute state that accompanies the solo change.
+	 */
 	solo(on?: boolean, mute?: boolean): boolean | void {
 		if (on === undefined) return this._solo;
 		this.mute(mute);
@@ -1137,14 +1250,17 @@ class Sound extends EventEmitter {
 		this._emit('solo', on);
 		return this._solo;
 	}
+	/** Get the locked flag (no arg) or set it (locked columns ignore global edits). */
 	lock(on?: boolean): boolean | void {
 		if (on === undefined) return this._locked;
 		this._locked = on;
 		this._emit('locked', on);
 	}
+	/** Raw buffer duration in seconds (not adjusted for rate/loop). */
 	duration() {
 		return this._duration;
 	}
+	/** Audible duration: the loop length (when looping) divided by the rate. */
 	realDuration() {
 		if (this._duration === 0 || this._rate === 0) return 0;
 		// only count the loop range when actually looping — a disabled loop
@@ -1155,11 +1271,17 @@ class Sound extends EventEmitter {
 				: this._duration;
 		return len / this._rate;
 	}
+	/** Mark the sound as actively sampling (drives the UI state/events). */
 	sampling(on: boolean): void {
 		this._sampling = on;
 		this._emit('sampling', on);
 	}
 
+	/**
+	 * Fetch and decode the audio file at `url` (or the current url). Handles
+	 * data: URLs, XHR loading and the reverse-on-decode case; emits
+	 * `loading`/`ready`/`loaded`/`loaderror` as it progresses.
+	 */
 	load(url?: string): void {
 		this._clearElapsed();
 		this._clearLoopScheduler();
@@ -1210,6 +1332,11 @@ class Sound extends EventEmitter {
 			}
 		}
 	}
+	/**
+	 * Decode a copied ArrayBuffer into an AudioBuffer, apply the reversed flag,
+	 * store the raw bytes (`_buffer`, used by save/export) and emit ready/loaded.
+	 * On failure emits `loaderror` and clears the loaded state.
+	 */
 	decodeAudioData(arrayBuffer: ArrayBuffer): void {
 		const error = (err?: unknown) => {
 			console.error('ERRROR decoding audio data', this._id, err);
@@ -1264,6 +1391,7 @@ class Sound extends EventEmitter {
 		);
 		if (p && p.catch) p.catch((err) => error(err));
 	}
+	/** Guess a MIME type from the file extension (mp3/wav/m4a; mp3 fallback). */
 	urlToMimeType(url?: string | null): string | null {
 		if (!url) return 'audio/mpeg';
 		const src = url.toLowerCase();
@@ -1272,14 +1400,17 @@ class Sound extends EventEmitter {
 		else if (src.endsWith('.m4a')) return 'audio/mp4';
 		else return null;
 	}
+	/** Record the MIDI note mapped to this sound and emit `midinote`. */
 	midiNote(number: number): void {
 		this._midiNote = number;
 		this._emit('midinote', number);
 	}
+	/** Toggle MIDI-learn mode for this sound and emit `midimapmode`. */
 	midiMapMode(on: boolean): void {
 		this._midiMapMode = on;
 		this._emit('midimapmode', on);
 	}
+	/** Tear down nodes/listeners so a destroyed sound cannot be played or emit. */
 	destroy() {
 		(this as any).emit = () => {};
 		// stop a late _materialize promise from wiring a node into a dead sound
@@ -1309,11 +1440,13 @@ class Sound extends EventEmitter {
 		} catch (e) {}
 		clearTimeout(this.fadeOutTimeout);
 	}
+	/** Debug logger (no-op unless `DEBUG` is on). */
 	log() {
 		if (!this.DEBUG) return;
 		//let caller_line = (new Error).stack.split("\n")[4]
 		console.log('Sound.js', this.id, Array.prototype.slice.call(arguments).join(' '));
 	}
+	/** Reserved error hook (kept for API compatibility; currently a no-op). */
 	error(err: unknown): void {
 		void err;
 	}

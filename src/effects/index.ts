@@ -1,3 +1,11 @@
+/**
+ * Effect catalog and factory.
+ *
+ * `EFFECTS` is the serializable catalog the app renders (id, name, default
+ * params); `EFFECT_CLASSES` maps each id to its concrete `Effect` subclass.
+ * `createEffect` builds one instance, filling in any params the caller omitted
+ * without overwriting supplied ones.
+ */
 const EFFECTS: EffectDefinition[] = [
 	{
 		id: 'compressor',
@@ -201,6 +209,7 @@ export type EffectCtor = new (
 	options?: Record<string, any>,
 ) => Effect;
 
+/** Lookup table: catalog id → concrete effect class. */
 const EFFECT_CLASSES: Record<string, EffectCtor> = {
 	delay: Delay,
 	dubdelay: DubDelay,
@@ -223,6 +232,18 @@ const EFFECT_CLASSES: Record<string, EffectCtor> = {
 	tapedelay: TapeDelay,
 }
 
+/**
+ * Create a concrete effect by catalog id.
+ *
+ * Caller-supplied options win; only params that are `undefined`/`null` are
+ * filled from the catalog defaults (so saved params survive a model load).
+ * Awaits the worklet registration before constructing the node.
+ *
+ * @param id - catalog effect id (e.g. 'delay').
+ * @param context - AudioContext the effect belongs to.
+ * @param opt - initial parameter values.
+ * @throws when `id` is not a known effect.
+ */
 const createEffect = async (id: string, context: AudioContext, opt: Record<string, any> = {}): Promise<Effect> => {
 	const defs = EFFECTS.filter((eff) => eff.id === id)[0];
 	if (!defs || !EFFECT_CLASSES[id]) throw new Error('Effect doesnt exist: ' + id);

@@ -10,6 +10,7 @@ import { EFFECTS_WORKLET_SOURCE } from './workletsource.generated'
 
 const workletPromises = new WeakMap<AudioContext, Promise<void>>();
 
+/** Fetch the generated source as a Blob URL and register it on `context`. */
 const loadEffectsWorklet = async (context: AudioContext): Promise<void> => {
 	const blob = new Blob([EFFECTS_WORKLET_SOURCE], { type: 'text/javascript' });
 	const url = URL.createObjectURL(blob);

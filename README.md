@@ -31,6 +31,21 @@ by `pnpm worklet:gen`. **After editing any `source.js`, run `pnpm worklet:gen`**
 - `pnpm typecheck` — `tsc --noEmit`
 - `pnpm worklet:gen` / `pnpm worklet:check`
 - `pnpm test` — offline DSP harness (all 19 effect processors)
+- `pnpm docs:api` — generate the TypeDoc API reference into `docs/api/`
+
+## Documentation
+
+The engine's classes, methods and types are documented with JSDoc comments.
+Human-readable guides live in [`docs/`](./docs/README.md):
+
+- [Getting started & architecture](./docs/README.md)
+- [Events reference](./docs/events.md)
+- [Effects catalog](./docs/effects.md)
+- [Models & presets](./docs/models-and-presets.md)
+- [Development](./docs/development.md)
+
+`pnpm docs:api` renders the JSDoc into a browsable TypeDoc site at
+`docs/api/index.html` (generated, not committed).
 
 ## Consuming it
 

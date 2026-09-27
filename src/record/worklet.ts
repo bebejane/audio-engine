@@ -8,11 +8,14 @@
  */
 export const RECORDER_WORKLET_SOURCE = `
 const CHUNK_SIZE = 16384;
+/** AudioWorklet processor that buffers input PCM and posts it in chunks. */
 class PurplePurplesRecorderProcessor extends AudioWorkletProcessor {
+	/** Create the processor with an empty per-channel buffer. */
 	constructor() {
 		super();
 		this.channels = [];
 	}
+	/** Post the accumulated per-channel chunks to the main thread and clear. */
 	flush() {
 		if (!this.channels.length || !this.channels[0].length) return;
 		const n = Math.max(1, this.channelCount || this.channels.length || 1);
@@ -23,6 +26,7 @@ class PurplePurplesRecorderProcessor extends AudioWorkletProcessor {
 		this.channels = [];
 		this.port.postMessage({ buffer: buffers });
 	}
+	/** Buffer incoming samples, pass input through, flush every CHUNK_SIZE frames. */
 	process(inputs, outputs) {
 		const input = inputs[0] || [];
 		for (let c = 0; c < input.length; c++) {
@@ -47,6 +51,7 @@ export default RECORDER_WORKLET_SOURCE;
 
 const workletPromises = new WeakMap<AudioContext, Promise<void>>();
 
+/** Blob-URL register the recorder worklet source on `context` once. */
 const loadRecorderWorklet = async (context: AudioContext): Promise<void> => {
 	const blob = new Blob([RECORDER_WORKLET_SOURCE], { type: 'text/javascript' });
 	const url = URL.createObjectURL(blob);

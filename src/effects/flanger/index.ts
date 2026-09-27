@@ -8,6 +8,7 @@ import { createWorkletEffectNode } from '../worklet'
  * pp-flanger worklet; the same normalized ranges as the original node graph.
  */
 export default class Flanger extends Effect {
+	/** Build the effect: create the pp-flanger worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			time: { value: 0.45, max: 1, min: 0, type: 'float' },
@@ -25,6 +26,7 @@ export default class Flanger extends Effect {
 		this.initParams()
 	}
 
+	/** Base delay time, normalized 0–1. */
 	get time(): number {
 		return this.options.time
 	}
@@ -34,6 +36,7 @@ export default class Flanger extends Effect {
 		this.node.parameters.get('time').value = time
 	}
 
+	/** LFO sweep rate, normalized 0–1. */
 	get speed(): number {
 		return this.options.speed
 	}
@@ -43,6 +46,7 @@ export default class Flanger extends Effect {
 		this.node.parameters.get('speed').value = speed
 	}
 
+	/** LFO sweep depth, normalized 0–1. */
 	get depth(): number {
 		return this.options.depth
 	}
@@ -52,6 +56,7 @@ export default class Flanger extends Effect {
 		this.node.parameters.get('depth').value = depth
 	}
 
+	/** Feedback (repeat) amount, normalized 0–1. */
 	get feedback(): number {
 		return this.options.feedback
 	}
@@ -61,6 +66,7 @@ export default class Flanger extends Effect {
 		this.node.parameters.get('feedback').value = feedback
 	}
 
+	/** Dry/wet mix, normalized 0–1. */
 	get mix(): number {
 		return this.options.mix
 	}

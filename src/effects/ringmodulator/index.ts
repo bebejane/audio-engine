@@ -8,6 +8,7 @@ import { createWorkletEffectNode } from '../worklet'
  * internal compressor) runs in the pp-ringmodulator worklet.
  */
 export default class RingModulator extends Effect {
+	/** Build the effect: create the pp-ringmodulator worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			speed: { value: 30, max: 2000, min: 0, type: 'float' },

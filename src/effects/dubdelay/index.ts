@@ -7,6 +7,7 @@ import { createWorkletEffectNode } from '../worklet'
  * mix, exactly like the original node graph. DSP in pp-dubdelay worklet.
  */
 export default class DubDelay extends Effect {
+	/** Build the effect: create the pp-dubdelay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			feedback: { value: 0.6, max: 1, min: 0, type: 'float' },

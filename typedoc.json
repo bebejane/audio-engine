@@ -1,0 +1,21 @@
+{
+	"$schema": "https://typedoc.org/schema.json",
+	"name": "audio-engine",
+	"entryPoints": ["src"],
+	"entryPointStrategy": "expand",
+	"tsconfig": "tsconfig.json",
+	"out": "docs/api",
+	"readme": "none",
+	"exclude": ["**/workletsource.generated.ts", "**/*.js", "**/*.mjs"],
+	"excludePrivate": false,
+	"excludeProtected": false,
+	"excludeInternal": false,
+	"excludeExternals": true,
+	"skipErrorChecking": true,
+	"categorizeByGroup": true,
+	"groupOrder": ["Classes", "Interfaces", "Type Aliases", "Functions", "Variables", "*"],
+	"validation": {
+		"notExported": false,
+		"invalidLink": true
+	}
+}

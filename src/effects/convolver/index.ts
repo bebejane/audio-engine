@@ -12,6 +12,10 @@ export default class Convolver extends Effect {
 	/** Optional completion callback (set externally by callers). */
 	callback?: (err?: unknown) => void;
 
+	/**
+	 * Build the effect: create the pp-convolver worklet node, then fetch +
+	 * decode `options.impulse` and post it as the impulse response.
+	 */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
@@ -45,6 +49,7 @@ export default class Convolver extends Effect {
 			})
 	}
 
+	/** Dry/wet mix between the input and the convolved signal. */
 	get mix(): number {
 		return this.options.mix
 	}

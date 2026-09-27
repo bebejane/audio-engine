@@ -32,6 +32,14 @@ interface SoundItem {
 	sound: Sound;
 }
 
+/**
+ * Owns model and preset I/O for the engine: fetch/unzip/populate models,
+ * serialize the current engine state to a .purple.zip, and read/write the
+ * slot-addressed preset list persisted inside index.json.
+ *
+ * Constructed by `AudioEngine` (exposed as `engine.modelManager`); the engine's
+ * `models`/`presets`/`loadModel`/… methods are thin facades over this class.
+ */
 export default class ModelManager {
 	engine: AudioEngine;
 	/** Entries from /models/index.json (plus in-session "new" models). */
@@ -43,12 +51,20 @@ export default class ModelManager {
 	/** Full models already unzipped (files carry buffers), keyed by name. */
 	_cache: Record<string, Model> = {};
 
+	/** Create the manager bound to one engine. */
 	constructor(engine: AudioEngine) {
 		this.engine = engine;
 	}
 
 	// ---- fetch helpers ---------------------------------------------------
 
+	/**
+	 * Fetch a model resource. JSON files are parsed; everything else is read as
+	 * an ArrayBuffer with streamed progress reported as `notification` events.
+	 *
+	 * @param file - absolute/relative URL to fetch.
+	 * @throws when the response is not ok.
+	 */
 	async loadFile(file: string): Promise<unknown> {
 		const binary = !file.toLowerCase().endsWith('.json');
 		const res = await fetch(file);
@@ -95,12 +111,14 @@ export default class ModelManager {
 		return buffer;
 	}
 
+	/** Forward an engine event (ModelManager emits through the engine). */
 	emit(event: string, ...args: unknown[]): void {
 		this.engine.emit(event, ...args);
 	}
 
 	// ---- models ----------------------------------------------------------
 
+	/** Fetch `/models/index.json` and emit `models` (drives the model dropdown). */
 	async loadModels() {
 		const list = (await this.loadFile(this.engine.modelsPath + '/index.json')) as ModelMeta[];
 		this.models = list;
@@ -333,6 +351,7 @@ export default class ModelManager {
 		this.download(blob, sound._filename);
 	}
 
+	/** Trigger a browser download of `blob` under `filename` (temporary <a>). */
 	download(blob: Blob, filename: string) {
 		const a = document.createElement('a');
 		a.style.display = 'none';
@@ -437,6 +456,7 @@ export default class ModelManager {
 		this.engine.master.play();
 	}
 
+	/** Empty every preset slot and emit the new list. */
 	clearPresets() {
 		this.presets = this._emptySlots();
 		this.emit('presets', this.presets);
@@ -447,6 +467,7 @@ export default class ModelManager {
 		return this.presets.findIndex((preset) => !preset);
 	}
 
+	/** A fresh slot array of PRESET_SLOTS nulls. */
 	_emptySlots(): PresetSlot[] {
 		return new Array(PRESET_SLOTS).fill(null);
 	}
@@ -461,6 +482,7 @@ export default class ModelManager {
 		return slots;
 	}
 
+	/** Snapshot one sound's saved state (with optional overrides) for a preset. */
 	_snapshot(item: SoundItem, overrides: Partial<PresetSound> = {}): PresetSound {
 		const state: SoundSettings = item.sound.getSaveState();
 		if (state.effects)
@@ -473,6 +495,7 @@ export default class ModelManager {
 		return { id: item.id, ...state, ...overrides };
 	}
 
+	/** Write a preset into one slot and emit the updated list. */
 	_setPreset(index: number, preset: Preset): Preset {
 		if (index < 0 || index >= PRESET_SLOTS) return preset;
 		const slots = this._normalizeSlots(this.presets);

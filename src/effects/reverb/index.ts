@@ -10,6 +10,7 @@ import { createWorkletEffectNode } from '../worklet'
  * internal state, like the old ConvolverNode swap.
  */
 export default class Reverb extends Effect {
+	/** Build the effect: create the pp-reverb worklet node and its initial IR. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			mix: { value: 0.5, max: 1, min: 0, type: 'float' },
@@ -26,6 +27,7 @@ export default class Reverb extends Effect {
 		this.buildImpulse()
 	}
 
+	/** Dry/wet mix. */
 	get mix(): number {
 		return this.options.mix
 	}
@@ -35,6 +37,7 @@ export default class Reverb extends Effect {
 		this.node.parameters.get('mix').setTargetAtTime(mix, this.context.currentTime, 0.02)
 	}
 
+	/** Impulse response length in seconds (0.0001 - 10). */
 	get time(): number {
 		return this.options.time
 	}
@@ -44,6 +47,7 @@ export default class Reverb extends Effect {
 		this.buildImpulse()
 	}
 
+	/** Decay exponent of the noise impulse (0.0001 - 10). */
 	get decay(): number {
 		return this.options.decay
 	}
@@ -53,6 +57,7 @@ export default class Reverb extends Effect {
 		this.buildImpulse()
 	}
 
+	/** Reverse the impulse response (swell instead of decay). */
 	get reverse(): boolean {
 		return this.options.reverse
 	}
@@ -62,6 +67,10 @@ export default class Reverb extends Effect {
 		this.buildImpulse()
 	}
 
+	/**
+	 * Generate a decaying (optionally reversed) stereo noise impulse from the
+	 * current time/decay and ship it to the worklet's convolver.
+	 */
 	private buildImpulse(): void {
 		const length = Math.max(1, Math.round(this.context.sampleRate * this.time))
 		const impulseL = new Float32Array(length)

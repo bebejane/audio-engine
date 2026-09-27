@@ -1,13 +1,27 @@
 // @ts-nocheck
+/**
+ * Recorder worker: accumulates Float32 chunks streamed from the recorder
+ * AudioWorklet (via the main thread), then packs them into a WAV on `stop`.
+ * A `cancel` message discards the take and replies `{ cancelled: true }`.
+ *
+ * Runs in the worker scope (`self` global), hence `@ts-nocheck`.
+ */
 import wavEncoder from '../encoders/wav';
 
+/** Channel count for the current take (from the start message). */
 let channels = 2;
+/** Sample rate for the current take (from the start message). */
 let sampleR = 44100;
+/** Per-channel arrays of incoming chunks. */
 let buffer;
+/** Total frames accumulated across all chunks. */
 let length = 0;
+/** True once stop/cancel has run. */
 let stopped = false;
+/** True once a start message has been seen. */
 let started = false;
 
+/** Reset all take state back to empty. */
 const reset = () => {
 	length = 0;
 	buffer = [[], []];
@@ -15,6 +29,10 @@ const reset = () => {
 	started = false;
 };
 
+/**
+ * Message protocol: `{ start, stop, cancel, numChannels, sampleRate }` control
+ * the take; `{ buffer }` appends a chunk of interleaved-per-channel PCM.
+ */
 self.onmessage = (event: MessageEvent) => {
 	const { stop, start, cancel, numChannels, sampleRate } = event.data;
 	if (cancel) {

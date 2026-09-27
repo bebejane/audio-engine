@@ -13,6 +13,7 @@
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"test": "node tests/verify-effects.mjs",
+		"docs:api": "typedoc",
 		"worklet:gen": "node scripts/build-effects-worklet.mjs",
 		"worklet:check": "node scripts/build-effects-worklet.mjs --check",
 		"pretest": "node scripts/build-effects-worklet.mjs"
@@ -27,6 +28,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "^26.6.3",
+		"typedoc": "^0.28.20",
 		"typescript": "^5.9.3"
 	},
 	"packageManager": "pnpm@12.3.4"

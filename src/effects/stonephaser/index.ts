@@ -14,6 +14,7 @@ import { createWorkletEffectNode } from '../worklet'
  * smoothing would make the phaser feel sluggish.
  */
 export default class StonePhaser extends Effect {
+	/** Build the effect: create the pp-stonephaser worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			speed: { value: 0.2, max: 5, min: 0.01, type: 'float' },

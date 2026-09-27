@@ -19,6 +19,7 @@ import { createWorkletEffectNode } from '../worklet'
  * echoes like the real machine.
  */
 export default class TapeDelay extends Effect {
+	/** Build the effect: create the pp-tapedelay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			time: { value: 220, max: 600, min: 30, type: 'float' },
@@ -79,6 +80,7 @@ export default class TapeDelay extends Effect {
 		this.node.parameters.get('mix').setTargetAtTime(value, this.context.currentTime, 0.02)
 	}
 
+	/** Playback head 1 (shortest delay) on/off. */
 	get head1(): boolean {
 		return this.options.head1
 	}
@@ -88,6 +90,7 @@ export default class TapeDelay extends Effect {
 		this.node.parameters.get('head1').value = on ? 1 : 0
 	}
 
+	/** Playback head 2 (2x spacing) on/off. */
 	get head2(): boolean {
 		return this.options.head2
 	}
@@ -97,6 +100,7 @@ export default class TapeDelay extends Effect {
 		this.node.parameters.get('head2').value = on ? 1 : 0
 	}
 
+	/** Playback head 3 (3x spacing) on/off. */
 	get head3(): boolean {
 		return this.options.head3
 	}

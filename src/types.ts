@@ -43,13 +43,17 @@ export interface ProcessSampleOptions {
 export interface AudioEngineOptions {
 	/** AudioContext sample rate; omit to use the device default. */
 	sampleRate?: number;
+	/** Number of output channels (stored, used by ads/analysers). */
 	channels?: number;
 	/** Initial master volume (0–1). */
 	volume?: number;
 	/** Legacy Electron flag (unused in the web build). */
 	electron?: boolean;
+	/** Create output/input analysers at startup. */
 	enableAnalysers?: boolean;
+	/** Enable loop support on every sound. */
 	enableLoops?: boolean;
+	/** Track playback elapsed time per sound. */
 	enableElapsed?: boolean;
 	/** Trim/normalize recorded samples; `false` disables processing. */
 	processSample?: boolean | ProcessSampleOptions;
@@ -59,6 +63,7 @@ export interface AudioEngineOptions {
 	audioPath?: string;
 }
 
+/** A microphone as enumerated by `navigator.mediaDevices` (structural copy). */
 export interface MediaDeviceInfoLike {
 	deviceId: string;
 	label: string;
@@ -66,6 +71,7 @@ export interface MediaDeviceInfoLike {
 	kind: string;
 }
 
+/** A MIDI input as reported by WebMidi (structural copy). */
 export interface MidiDeviceInfoLike {
 	deviceId: string;
 	name: string;
@@ -86,6 +92,7 @@ export interface AudioEngineEvents {
 	emit(event: string, ...args: unknown[]): boolean;
 }
 
+/** Transport controller (engine.master) as used by the app. */
 export interface MasterLike {
 	state: Record<string, Any>;
 	play(opt?: { enableElapsed?: boolean }): void;
@@ -135,6 +142,11 @@ export interface SoundLike {
 	};
 }
 
+/**
+ * The engine's app-facing surface. Implemented by the concrete `AudioEngine`
+ * class and asserted against it at compile time in `contract.ts`, so the two
+ * cannot drift.
+ */
 export interface AudioEngine extends AudioEngineEvents {
 	master: MasterLike;
 	/** Records engine state changes and loops them back (R / L shortcuts). */
@@ -144,12 +156,15 @@ export interface AudioEngine extends AudioEngineEvents {
 	soundMap: Record<string, SoundLike>;
 	sampleRate: number;
 	effects: EffectDef[];
+	/** Encode raw PCM (or an AudioBuffer) to a wav/mp3 Blob in a worker. */
 	encodeAudio(
 		buffer: Float32Array[] | AudioBuffer,
 		format: 'wav' | 'mp3',
 		opt?: Record<string, unknown>,
 	): Promise<Blob>;
+	/** Abort the in-flight encodeAudio (rejects with 'CANCELLED'). */
 	cancelEncodeAudio(): void;
+	/** Initialize input + MIDI devices, restoring last-used ids when given. */
 	init(
 		lastInputDevice?: string | null,
 		lastMidiDevice?: string | null,
@@ -234,6 +249,11 @@ export interface AudioEngine extends AudioEngineEvents {
 	clearPresets(): void;
 }
 
+/**
+ * A `Sound` as returned by `playSound()` before it is registered as a grid
+ * item — the same object, but the app only relies on this fire-and-forget
+ * subset (play/stop/volume + events).
+ */
 export interface RawSound {
 	id?: string;
 	load(url?: string): void;
@@ -289,20 +309,25 @@ export interface SoundSettings {
 	effects?: EffectSnapshot[];
 }
 
+/** A sound's settings plus the grid id they belong to (one preset entry). */
 export interface PresetSound extends SoundSettings {
 	id: string;
 }
 
 /** A saved snapshot of every sound in the current model. */
 export interface Preset {
+	/** Creation timestamp (ms). */
 	at: number;
+	/** Optional user-facing name. */
 	name?: string;
+	/** One entry per sound at the time the preset was taken. */
 	sounds: PresetSound[];
 }
 
 /** One preset slot: a snapshot, or `null` when the slot is still empty. */
 export type PresetSlot = Preset | null;
 
+/** One audio file entry inside a model's index.json. */
 export interface ModelFile {
 	filename: string;
 	mimeType?: string;
@@ -311,6 +336,7 @@ export interface ModelFile {
 	buffer?: ArrayBuffer;
 }
 
+/** A loaded model (grid of sounds): the shape of index.json plus buffers. */
 export interface Model {
 	name: string;
 	/** Model format version; absent in legacy files (treated as 1). */

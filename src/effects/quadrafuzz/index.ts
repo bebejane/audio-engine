@@ -8,6 +8,7 @@ import { createWorkletEffectNode } from '../worklet'
  * pp-quadrafuzz worklet.
  */
 export default class Quadrafuzz extends Effect {
+	/** Build the effect: create the pp-quadrafuzz worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			lowGain: { value: 0.6, max: 1, min: 0, type: 'float' },
@@ -24,12 +25,14 @@ export default class Quadrafuzz extends Effect {
 		this.initParams()
 	}
 
+	/** Validate and write one band's gain to the worklet. */
 	private setBand(name: string, value: number): void {
 		if (!isInRange(value, 0, 1)) return
 		this.options[name] = value
 		this.node.parameters.get(name).value = value
 	}
 
+	/** Low band gain (below 147 Hz). */
 	get lowGain(): number {
 		return this.options.lowGain
 	}
@@ -37,6 +40,7 @@ export default class Quadrafuzz extends Effect {
 		this.setBand('lowGain', value)
 	}
 
+	/** Low-mid band gain (147 - 587 Hz). */
 	get midLowGain(): number {
 		return this.options.midLowGain
 	}
@@ -44,6 +48,7 @@ export default class Quadrafuzz extends Effect {
 		this.setBand('midLowGain', value)
 	}
 
+	/** High-mid band gain (587 - 2490 Hz). */
 	get midHighGain(): number {
 		return this.options.midHighGain
 	}
@@ -51,6 +56,7 @@ export default class Quadrafuzz extends Effect {
 		this.setBand('midHighGain', value)
 	}
 
+	/** High band gain (above 2490 Hz). */
 	get highGain(): number {
 		return this.options.highGain
 	}

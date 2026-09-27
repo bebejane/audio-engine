@@ -7,6 +7,7 @@ import { createWorkletEffectNode } from '../worklet'
  * the depth curve and dry/wet mirror the original shaper + gain graph.
  */
 export default class Tremolo extends Effect {
+	/** Build the effect: create the pp-tremolo worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			speed: { value: 4, max: 20, min: 0, type: 'integer' },

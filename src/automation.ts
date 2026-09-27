@@ -56,20 +56,32 @@ function copyArg(value) {
 
 let uid = 0;
 
+/**
+ * Records engine/master method calls and replays them in a loop. One instance
+ * lives on the engine (`engine.automation`), installed via `install()`.
+ */
 export default class Automation {
 	engine;
 	/** recorded calls: { t, target, method, args } */
 	events = [];
+	/** true while capturing calls */
 	recording = false;
+	/** true while looping playback */
 	playing = false;
 	/** true while replaying, so wrapped calls don't re-record */
 	replaying = false;
+	/** performance.now() at record start (event times are relative to this) */
 	_t0 = 0;
+	/** loop length in ms (last event + MIN_DURATION) */
 	_duration = 0;
+	/** interval id of the playback scheduler */
 	_timer = null;
+	/** guard so wrapping only happens once */
 	_installed = false;
+	/** unique id, included in 'automation' events */
 	_id = ++uid;
 
+	/** Store the engine whose mutators will be wrapped on install(). */
 	constructor(engine) {
 		this.engine = engine;
 	}
@@ -82,6 +94,10 @@ export default class Automation {
 		if (this.engine.master) this._wrap(this.engine.master, 'master', MASTER_METHODS);
 	}
 
+	/**
+	 * Replace each named method with a wrapper that records the call (when
+	 * capturing and not replaying) and forwards to the original.
+	 */
 	_wrap(obj, target, names) {
 		const self = this;
 		names.forEach((name) => {
@@ -101,6 +117,7 @@ export default class Automation {
 		});
 	}
 
+	/** Number of captured events. */
 	get count() {
 		return this.events.length;
 	}
@@ -141,6 +158,7 @@ export default class Automation {
 		return this.playing;
 	}
 
+	/** Stop the playback timer and clear the playing flag (take is kept). */
 	stopPlayback() {
 		if (this._timer !== null) {
 			clearInterval(this._timer);
@@ -159,6 +177,10 @@ export default class Automation {
 		this._changed();
 	}
 
+	/**
+	 * Start the scheduler: on every tick, fire all events due since the last
+	 * tick, wrapping back to the start when the loop length elapses.
+	 */
 	_start() {
 		const self = this;
 		const duration = this._duration || MIN_DURATION;
@@ -178,12 +200,14 @@ export default class Automation {
 		}, TICK_MS);
 	}
 
+	/** Replay one captured call against the engine or master, as recorded. */
 	_apply(event) {
 		const obj = event.target === 'master' ? this.engine.master : this.engine;
 		const fn = obj && obj[event.method];
 		if (typeof fn === 'function') fn.apply(obj, event.args);
 	}
 
+	/** Emit the current automation state to the app. */
 	_changed() {
 		this.engine.emit('automation', {
 			id: this._id,

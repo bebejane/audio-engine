@@ -46,7 +46,10 @@ export abstract class Effect {
 		this.defaults = defaults;
 	}
 
-	/** Initial AudioParam values (options over defaults) for node construction. */
+	/**
+	 * Initial AudioParam values (options over defaults) for node construction.
+	 * Used at construction time, before `initParams()` can run through setters.
+	 */
 	protected collectInit(): Record<string, any> {
 		const init: Record<string, any> = {};
 		Object.keys(this.defaults).forEach((k) => {
@@ -64,6 +67,7 @@ export abstract class Effect {
 		});
 	}
 
+	/** Connect this effect's output to `audioNode` (records the target for disconnect). */
 	connect(audioNode: AudioNode): this {
 		this._connectedNode = audioNode;
 		this.outputNode.connect(audioNode);
@@ -71,18 +75,21 @@ export abstract class Effect {
 		return this;
 	}
 
+	/** Disconnect from `audioNode` (or the remembered target) if connected. */
 	disconnect(audioNode?: AudioNode): this {
 		if (this.connected) this.outputNode.disconnect(audioNode || (this._connectedNode as AudioNode));
 		this.connected = false;
 		return this;
 	}
 
+	/** Snapshot the current value of every declared parameter. */
 	params(): Record<string, number | boolean> {
 		const p: Record<string, number | boolean> = {};
 		Object.keys(this.defaults).forEach((k) => (p[k] = (this as any)[k]));
 		return p;
 	}
 
+	/** Restore every parameter to its catalog default. */
 	reset(): boolean {
 		Object.keys(this.defaults).forEach((k) => ((this as any)[k] = this.defaults[k].value));
 		return true;

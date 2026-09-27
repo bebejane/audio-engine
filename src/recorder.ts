@@ -28,6 +28,16 @@ interface Deferred<T = unknown> {
 
 type RejectableWorker = Worker & { reject?: (err?: unknown) => void };
 
+/**
+ * Records audio from an AudioNode (master mix) or, in sampler mode, from a
+ * MediaStream (microphone) and produces a WAV Blob + Float32 buffer.
+ *
+ * Capture runs in an AudioWorklet (`record/worklet.ts`) that forwards PCM to a
+ * worker (`record/worker.ts`) which accumulates and packs it. The engine owns
+ * two instances: `masterRecorder` (mixdown) and `sampleRecorder` (mic input).
+ * Emits `recording`/`sampling`, `progress`, `sampleprocess` and
+ * `encodingprogress`; `record()` resolves with the finished recording object.
+ */
 class Recorder extends EventEmitter{
     context: AudioContext;
     _sampleRate: number;
@@ -76,6 +86,7 @@ class Recorder extends EventEmitter{
         this.encoderWorker = null;
         this.init()
     }
+    /** Spawn the record worker, wire its messages and load the worklet. */
     init(){
 
         this.worker = createRecordWorker();
@@ -151,6 +162,11 @@ class Recorder extends EventEmitter{
             this._processor = null;
         }
     }
+    /**
+     * Start recording from `node`. Optionally associates the take with a grid
+     * `id` (sampler mode). Resolves with `{ id, url, blob, buffer, mimeType,
+     * filename, name, duration }`; rejects with 'RECORDING' if already busy.
+     */
     record(node: AudioNode, id?: string | number){
         if(this._recording)
             return Promise.reject('RECORDING')
@@ -161,14 +177,17 @@ class Recorder extends EventEmitter{
             this._start()
         })
     }
+    /** Stop capturing and ask the worker to pack the take to a WAV. */
     stop(){
         this._processing = true;
         this._disconnect()
         this.worker.postMessage({stop:true})
     }
+    /** Discard the current take (worker replies `{ cancelled: true }`). */
     cancel(){
         this.worker.postMessage({cancel:true})   
     }
+    /** Connect the source to the worklet (and output stream) and start capture. */
     _start(){
         if(!this._processor){
             if(this._promise) this._promise.reject('recorder not ready');
@@ -216,6 +235,7 @@ class Recorder extends EventEmitter{
         else
             this.emit('recording', true);
     }
+    /** Emit the sampler/recording-off event and reject the pending promise. */
     _handleError(err: unknown, duration = 0){
         //this.emit('progress', this._recordingId, {error:err, start:this.rectime, elapsed:duration, duration:duration, recording:false, processing:false})
         this._error = err;
@@ -229,6 +249,7 @@ class Recorder extends EventEmitter{
         
         this._clearProgress()
     }
+    /** Build the recording descriptor, resolve the promise and emit progress. */
     _handleFinish(blob: Blob, buffer: Float32Array[], duration: number){
         
         const name = "Purple #" + (this._recordingId+1) + " " + moment().format("MMM DD HH:mm:ss")
@@ -256,6 +277,7 @@ class Recorder extends EventEmitter{
         
         this.emit('progress', this._recordingId, {start:this._rectime, elapsed:duration, duration:0, recording:false, processing:false})
     }
+    /** Disconnect the source/worklet/output and clear the busy flags. */
     _disconnect(){
         if(this._recording){
             if(this._sampler)
@@ -272,10 +294,12 @@ class Recorder extends EventEmitter{
         this._rectime = 0;
 
     }
+    /** Reserved hook (progress is emitted from _emitProgress instead). */
     _checkProgress(){
         
     }
    
+    /** Trim/normalize a captured buffer, then re-encode it to a WAV Blob. */
     _process(buffer: Float32Array[], id?: string | number){
         
         // only called when _processSample is truthy (see init message handler)
@@ -310,6 +334,10 @@ class Recorder extends EventEmitter{
             return data;
         })
     }
+    /**
+     * Encode `buffer` in a short-lived encoder worker; forwards progress as
+     * `encodingprogress` and resolves with the Blob.
+     */
     _encodeAudio(buffer: Float32Array[], format: string, opt: Record<string, unknown>) {
 
         this._processing = true
@@ -343,6 +371,7 @@ class Recorder extends EventEmitter{
         })
         
     }
+    /** Emit a `progress` event describing recording/processing state. */
     _emitProgress(){
         
         if(this._recording){
@@ -357,12 +386,14 @@ class Recorder extends EventEmitter{
         else
             this.emit('progress', prog)
     }
+    /** Stop the progress timer, clear flags and emit a final progress frame. */
     _clearProgress(){
         clearInterval(this.recordingProgress)
         this._recording = false;
         this._processing = false;
         this._emitProgress()
     }
+    /** Disconnect and terminate both workers (called by the engine's destroy). */
     destroy(){
         try{
             this._disconnect();

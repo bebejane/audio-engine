@@ -84,10 +84,12 @@ const IDLE_GRACE = 500;
 const active = new Set<AnalyserListener>();
 let pumping = false;
 
+/** Remove a listener from the shared rAF pump. */
 function unschedule(listener: AnalyserListener): void {
 	active.delete(listener);
 }
 
+/** Add a listener to the shared pump, starting the rAF loop if needed. */
 function schedule(listener: AnalyserListener): void {
 	listener.last = 0;
 	active.add(listener);
@@ -97,6 +99,11 @@ function schedule(listener: AnalyserListener): void {
 	}
 }
 
+/**
+ * One rAF tick: for every active listener, retire settled idle ones, skip
+ * those whose interval isn't due yet, and read the rest. Re-schedules itself
+ * while anything is active.
+ */
 function pump(): void {
 	const now = performance.now();
 	try {
@@ -126,6 +133,7 @@ function pump(): void {
 // rendering graph (so they update in every browser) without a
 // MediaStreamDestination + gain node per listener.
 const sinks = new WeakMap<AudioContext, GainNode>();
+/** Get (or lazily create) the shared silent sink for `context`. */
 function sinkFor(context: AudioContext): GainNode {
 	let sink = sinks.get(context);
 	if (!sink) {
@@ -137,6 +145,15 @@ function sinkFor(context: AudioContext): GainNode {
 	return sink;
 }
 
+/**
+ * Reads level / time-domain / frequency data from a source node for one or
+ * more subscribers.
+ *
+ * A single Analyser owns one `AnalyserNode` per requested type (volume,
+ * timedomain, frequency) and fans their data out to callbacks / `on(type)`
+ * events. Instances are created and cached per sound+type by the engine's
+ * `analyse()`.
+ */
 class Analyser extends EventEmitter {
 	id: string | number;
 	context: AudioContext;
@@ -144,7 +161,9 @@ class Analyser extends EventEmitter {
 	sampleRate: number;
 	options: Partial<AnalyserOptions>;
 	idle: boolean;
+	/** mirror of the last setActive() flag, to skip redundant work */
 	_activeSet: boolean;
+	/** one entry per analyser type, keyed by type name */
 	_listeners: Record<string, AnalyserListener>;
 
 	constructor(
@@ -167,6 +186,10 @@ class Analyser extends EventEmitter {
 		this._listeners = {};
 		this.idle = false;
 	}
+	/**
+	 * Subscribe to `type` ('volume' | 'timedomain' | 'frequency'). Accepts
+	 * either `(type, cb)` or the EventEmitter `(type, options, cb)` shape.
+	 */
 	addEventListener(
 		type: string,
 		opt?: AnalyserOptions | AnalyserCallback,
@@ -179,6 +202,7 @@ class Analyser extends EventEmitter {
 		this._connect(listener);
 		this._analyse(listener);
 	}
+	/** Unsubscribe `cb` (or all callbacks when omitted) from `type`. */
 	removeEventListener(type: string, cb?: AnalyserCallback): void {
 		const listener = this._listeners[type];
 		if (!listener) return;
@@ -192,10 +216,12 @@ class Analyser extends EventEmitter {
 	}
 	// NB: returning `this` keeps these assignable to EventEmitter.on/off (the
 	// engine's analyser also supports the (type, listener) EventEmitter shape)
+	/** EventEmitter-style alias for {@link addEventListener}. */
 	on(type: string, opt?: AnalyserOptions | AnalyserCallback, cb?: AnalyserCallback): this {
 		this.addEventListener(type, opt, cb);
 		return this;
 	}
+	/** EventEmitter-style alias for {@link removeEventListener}. */
 	off(type: string, cb?: AnalyserCallback): this {
 		this.removeEventListener(type, cb);
 		return this;
@@ -221,6 +247,7 @@ class Analyser extends EventEmitter {
 			}
 		});
 	}
+	/** Re-point every listener at a replacement source node (after node swaps). */
 	setNode(node: AudioNode): void {
 		if (node === this.node) return;
 		Object.keys(this._listeners).forEach((type) => {
@@ -234,6 +261,7 @@ class Analyser extends EventEmitter {
 			if (listener.analysing) schedule(listener);
 		});
 	}
+	/** Merge new options into a listener type and apply them to its AnalyserNode. */
 	setOptions(type: string, opt: Partial<AnalyserOptions>): void {
 		const listener = this._listeners[type];
 		if (!listener) return;
@@ -245,6 +273,7 @@ class Analyser extends EventEmitter {
 		listener.analyser.smoothingTimeConstant = listener.options.smoothingTimeConstant;
 		if (listener.analysing) this._restartAnalyse(listener);
 	}
+	/** Stop reading and emit a final (zeroed) frame for every listener type. */
 	pause(): void {
 		Object.keys(this._listeners).forEach((type) => {
 			const listener = this._listeners[type];
@@ -252,12 +281,15 @@ class Analyser extends EventEmitter {
 			this._stopAnalyse(listener);
 		});
 	}
+	/** Resume reading for every listener type. */
 	unpause(): void {
 		Object.keys(this._listeners).forEach((type) => this._restartAnalyse(this._listeners[type]));
 	}
+	/** Disconnect one listener type (optionally only `cb`'s subscription). */
 	close(type: string, cb?: AnalyserCallback): void {
 		this._disconnect(this._listeners[type], cb);
 	}
+	/** Tear down every listener type: notify, stop and disconnect. */
 	destroy(): void {
 		Object.keys(this._listeners).forEach((type) => {
 			const listener = this._listeners[type];
@@ -266,12 +298,14 @@ class Analyser extends EventEmitter {
 			this._disconnect(listener);
 		});
 	}
+	/** Connect the source node into the listener's AnalyserNode + silent sink. */
 	_connect(listener: AnalyserListener): void {
 		if (listener.connected) return;
 		this.node.connect(listener.analyser);
 		listener.analyser.connect(sinkFor(this.context));
 		listener.connected = true;
 	}
+	/** Disconnect the listener's AnalyserNode, emitting an end frame first. */
 	_disconnect(listener?: AnalyserListener, cb?: AnalyserCallback): void {
 		if (!listener || !listener.connected) return;
 		this._end(listener, cb);
@@ -283,6 +317,7 @@ class Analyser extends EventEmitter {
 		} catch (e) {}
 		listener.connected = false;
 	}
+	/** Create (or reuse) the listener entry for a type and register `cb`. */
 	_setup(
 		type: string,
 		opt: Partial<AnalyserOptions> = {},
@@ -313,6 +348,7 @@ class Analyser extends EventEmitter {
 		if (cb) listener.callbacks.push(cb);
 		return listener;
 	}
+	/** Emit/send a final zeroed frame for a listener (type-appropriate shape). */
 	_end(listener: AnalyserListener, cb?: AnalyserCallback): void {
 		const end: AnalyserData =
 			listener.type === 'volume'
@@ -325,6 +361,7 @@ class Analyser extends EventEmitter {
 		if (cb) cb(end, listener.options);
 		else listener.callbacks.forEach((c) => c(end, listener.options));
 	}
+	/** Allocate the read buffer and start sampling a listener via the pump. */
 	_analyse(listener: AnalyserListener): void {
 		if (listener.analysing) return;
 
@@ -338,6 +375,7 @@ class Analyser extends EventEmitter {
 		listener.tick = () => this._read(listener);
 		schedule(listener);
 	}
+	/** Read one frame from the AnalyserNode and dispatch it (after shaping). */
 	_read(listener: AnalyserListener): void {
 		const { options, analyser, type } = listener;
 		const dataArray = listener.dataArray as Float32Array | Uint8Array;
@@ -387,6 +425,7 @@ class Analyser extends EventEmitter {
 		if (this.listenerCount(type)) this.emit(type, result, options);
 		listener.callbacks.forEach((cb) => (cb ? cb(result, options) : null));
 	}
+	/** Stop sampling a listener and return it to the inactive pool. */
 	_stopAnalyse(listener?: AnalyserListener): void {
 		if (!listener || !listener.analysing) return;
 		unschedule(listener);
@@ -394,11 +433,13 @@ class Analyser extends EventEmitter {
 		listener.paused = false;
 		listener.tick = null;
 	}
+	/** Restart sampling (used after option changes). */
 	_restartAnalyse(listener?: AnalyserListener): void {
 		if (!listener) return;
 		this._stopAnalyse(listener);
 		this._analyse(listener);
 	}
+	/** Peak-to-peak range of a byte time-domain frame, normalized to 0–1. */
 	_getDynamicRange(buffer: Uint8Array | Float32Array): number {
 		const len = buffer.length;
 		let min = 128;

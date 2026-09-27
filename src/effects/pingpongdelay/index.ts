@@ -7,6 +7,7 @@ import { createWorkletEffectNode } from '../worklet'
  * pp-pingpongdelay worklet; wet output is stereo (L tap / R tap).
  */
 export default class PingPongDelay extends Effect {
+	/** Build the effect: create the pp-pingpongdelay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			feedback: { value: 0.5, max: 1, min: 0, type: 'float' },

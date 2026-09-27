@@ -16,6 +16,7 @@ import { createWorkletEffectNode } from '../worklet'
  * 1 = the hardware blend (0.83·dry + BBD wet), 0 = clean dry.
  */
 export default class J60Chorus extends Effect {
+	/** Build the effect: create the pp-j60chorus worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			chorusI: { value: false, max: true, min: false, type: 'boolean' },

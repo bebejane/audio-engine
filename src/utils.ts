@@ -1,41 +1,75 @@
+/**
+ * Shared helpers used across the engine: runtime type guards, small DSP
+ * utilities, waveform peak extraction and array re-ordering.
+ *
+ * Nothing here touches the AudioContext; these are pure functions so they can
+ * also be imported by the app (the package re-exports this module from its
+ * index) and exercised outside the browser.
+ */
+
+/** `true` when `arg` is a string primitive or `String` object. */
 export const isString = (arg: unknown): boolean => toString.call(arg) === '[object String]';
 
+/** `true` only for plain objects (`{}` / `new Object()`), not arrays or class instances. */
 export const isObject = (arg: unknown): boolean => toString.call(arg) === '[object Object]';
 
+/** `true` for callable values (functions, classes, async functions). */
 export const isFunction = (arg: unknown): boolean => toString.call(arg) === '[object Function]';
 
+/** `true` for real, finite numbers (rejects `NaN`, `Infinity` and numeric strings). */
 export const isNumber = (arg: unknown): boolean =>
 	toString.call(arg) === '[object Number]' && (arg as number) === +arg;
 
+/** `true` for arrays (including cross-realm arrays). */
 export const isArray = (arg: unknown): boolean => toString.call(arg) === '[object Array]';
 
+/** `true` when `arg` is a number within the inclusive `[min, max]` range. */
 export const isInRange = (arg: unknown, min: unknown, max: unknown): boolean => {
 	if (!isNumber(arg) || !isNumber(min) || !isNumber(max)) return false;
 
 	return (arg as number) >= (min as number) && (arg as number) <= (max as number);
 };
 
+/** `true` for boolean primitives. */
 export const isBool = (arg: unknown): boolean => typeof arg === 'boolean';
 
+/** `true` when `audioNode` is an `OscillatorNode` (via its `toString` tag). */
 export const isOscillator = (audioNode: { toString(): string } | null | undefined): boolean =>
 	!!audioNode && audioNode.toString() === '[object OscillatorNode]';
 
+/** `true` when `audioNode` is an `AudioBufferSourceNode` (via its `toString` tag). */
 export const isAudioBufferSourceNode = (
 	audioNode: { toString(): string } | null | undefined,
 ): boolean => !!audioNode && audioNode.toString() === '[object AudioBufferSourceNode]';
 
+/**
+ * Equal-power dry level for a 0–1 wet/dry `mix` control.
+ *
+ * At `mix = 0` the dry signal is full (1), at `mix = 0.5` it is 1, and from
+ * there it tapers linearly to 0 at `mix = 1`. Returns 0 for an out-of-range or
+ * non-numeric mix.
+ */
 export const getDryLevel = (mix: number): number => {
 	if (!isNumber(mix) || mix > 1 || mix < 0) return 0;
 	if (mix <= 0.5) return 1;
 	return 1 - (mix - 0.5) * 2;
 };
 
+/**
+ * Equal-power wet level for a 0–1 wet/dry `mix` control — the mirror of
+ * {@link getDryLevel}: 0 at `mix = 0`, rising to 1 at `mix = 0.5` and staying
+ * there. Returns 0 for an out-of-range or non-numeric mix.
+ */
 export const getWetLevel = (mix: number): number => {
 	if (!isNumber(mix) || mix > 1 || mix < 0) return 0;
 	if (mix >= 0.5) return 1;
 	return 1 - (0.5 - mix) * 2;
 };
 
+/**
+ * Clamp `value` into `[min, max]` (inclusive). If `min > max` the arguments are
+ * treated as reversed, so the result still lies between the two bounds.
+ */
 export const clamp = (value: number, min: number, max: number): number =>
 	min < max
 		? value < min
@@ -49,6 +83,11 @@ export const clamp = (value: number, min: number, max: number): number =>
 				? min
 				: value;
 
+/**
+ * Map an audio filename to its MIME type by extension (mp3/mp4/m4a/wav/ogg/
+ * aif/webm). Returns the original falsy input unchanged, or `null` for an
+ * unknown extension.
+ */
 export const fileToMimeType = (filename?: string) => {
 	if (!filename) return filename ?? null;
 	const file = filename.toLowerCase();
@@ -78,6 +117,12 @@ export const fileToMimeType = (filename?: string) => {
  *   - right edge (end):   end   = zc + 1  (last  sample kept = data[zc])
  *
  * `from` must be within [0, data.length - 1].
+ *
+ * @param data - mono sample data to scan.
+ * @param from - index to start scanning from.
+ * @param dir - scan direction: `1` forward, `-1` backward.
+ * @param maxLook - maximum number of samples to search.
+ * @returns the retained crossing index, or `-1` when none was found.
  */
 export const findZeroCrossing = (
 	data: Float32Array,
@@ -102,11 +147,30 @@ export const findZeroCrossing = (
 	return -1;
 };
 
+/**
+ * Reverse the PCM of every channel of `buffer` in place.
+ *
+ * @param buffer - the AudioBuffer to reverse.
+ * @returns the same buffer instance, reversed.
+ */
 export const reverse = (buffer: AudioBuffer): AudioBuffer => {
 	for (let i = 0, c = buffer.numberOfChannels; i < c; ++i) buffer.getChannelData(i).reverse();
 	return buffer;
 };
 
+/**
+ * Peak-normalize each channel of `buffer` so the loudest sample reaches full
+ * scale, clamping the result to `[-1, 1]`.
+ *
+ * The optional `start`/`end` bounds accept negative and `-Infinity` indices
+ * (normalized with `nidx`) but the current implementation ignores them when
+ * computing the peak; they are kept for API compatibility.
+ *
+ * @param buffer - per-channel Float32 sample arrays.
+ * @param start - optional start index (negative allowed).
+ * @param end - optional end index (negative allowed).
+ * @returns new per-channel Float32 arrays scaled to peak amplitude.
+ */
 export const normalize = (buffer: Float32Array[], start?: number, end?: number): Float32Array[] => {
 	const isNeg = (number: number): boolean => {
 		return number === 0 && 1 / number === -Infinity;
@@ -149,6 +213,17 @@ export const normalize = (buffer: Float32Array[], start?: number, end?: number):
 	return normalized;
 };
 
+/**
+ * Slice a half-open `[start, end)` sample range out of per-channel data.
+ *
+ * Returns a new array with one or two channels. `end` is clamped to the last
+ * sample. NOTE: the right (second) channel is currently copied from `buffer[0]`
+ * like the left — this is the historical behaviour and is retained deliberately.
+ *
+ * @param buffer - one or two channel Float32 arrays.
+ * @param start - first sample index (inclusive).
+ * @param end - last sample index (exclusive).
+ */
 export const slice = (buffer: Float32Array[], start: number, end: number): Float32Array[] => {
 	if (end > buffer[0].length) end = buffer[0].length - 1;
 
@@ -165,6 +240,17 @@ export const slice = (buffer: Float32Array[], start: number, end: number): Float
 	else return [leftChunk];
 };
 
+/**
+ * Apply a fade envelope to the start of every channel of `buffer`.
+ *
+ * Currently a no-op: it returns the buffer immediately (the implementation
+ * below is disabled/experimental and forces `ms = 1000`).
+ *
+ * @param buffer - per-channel Float32 sample arrays.
+ * @param ms - fade length in milliseconds (ignored).
+ * @param sampleRate - sample rate (ignored).
+ * @returns the input buffer unchanged.
+ */
 export const fade = (buffer: Float32Array[], ms: number, sampleRate = 44100): Float32Array[] => {
 	return buffer;
 	ms = 1000;
@@ -203,6 +289,7 @@ export const fade = (buffer: Float32Array[], ms: number, sampleRate = 44100): Fl
 	return buffer;
 };
 
+/** Options for {@link trim}. */
 export interface TrimOptions {
 	sampleRate?: number;
 	trimLeft?: boolean;
@@ -210,6 +297,20 @@ export interface TrimOptions {
 	level?: number;
 }
 
+/**
+ * Trim leading (and optionally trailing) silence from a recording, snapping
+ * both cut points to a nearby zero crossing so the result starts/stops on a
+ * stationary sample (no click).
+ *
+ * The search window for a crossing is ~8 ms: wide enough to find one for
+ * low-pitched content but short enough that snapping never audibly shifts the
+ * attack or eats the tail. When no crossing is found the cut lands one sample
+ * inside the detected content, which is still click-free.
+ *
+ * @param buffer - per-channel Float32 sample arrays (channel 0 drives detection).
+ * @param opt - trim options; defaults to left-trim at level 0.05.
+ * @returns the trimmed per-channel arrays (see {@link slice}).
+ */
 export const trim = (
 	buffer: Float32Array[],
 	opt: TrimOptions = { sampleRate: 44100, trimLeft: true, trimRight: false, level: 0.05 },
@@ -287,12 +388,17 @@ export const trim = (
 // dependency on it. `extractPeaks` returns per-channel interleaved [min,max]
 // peak arrays quantized to 8/16/32-bit signed integers.
 
+/** Per-channel interleaved `[min, max]` peak data produced by {@link extractPeaks}. */
 export interface Peaks {
+	/** Number of `[min, max]` pairs per channel. */
 	length: number;
+	/** One typed array per channel, interleaved min/max. */
 	data: Array<Int8Array | Int16Array | Int32Array>;
+	/** Quantization depth (8, 16 or 32). */
 	bits: number;
 }
 
+/** Return the `{ min, max }` extrema of `array` (Infinity pair when empty). */
 const findMinMax = (array: Float32Array): { min: number; max: number } => {
 	let min = Infinity;
 	let max = -Infinity;
@@ -304,18 +410,21 @@ const findMinMax = (array: Float32Array): { min: number; max: number } => {
 	return { min, max };
 };
 
+/** Quantize a normalized sample `n` to a signed `bits`-wide integer. */
 const convert = (n: number, bits: number): number => {
 	const max = Math.pow(2, bits - 1);
 	const v = n < 0 ? n * max : n * max - 1;
 	return Math.max(-max, Math.min(max - 1, v));
 };
 
+/** Allocate the typed array matching `bits` (8/16/32; 32 is the fallback). */
 const makePeakArray = (bits: number, length: number): Int8Array | Int16Array | Int32Array => {
 	if (bits === 8) return new Int8Array(length);
 	if (bits === 16) return new Int16Array(length);
 	return new Int32Array(length);
 };
 
+/** Reduce one channel to interleaved `[min, max]` peaks, `samplesPerPixel` apart. */
 const extractChannelPeaks = (
 	channel: Float32Array,
 	samplesPerPixel: number,
@@ -334,6 +443,7 @@ const extractChannelPeaks = (
 	return peaks;
 };
 
+/** Average multiple channel peak arrays into a single mono peak array. */
 const makeMono = (
 	channelPeaks: Array<Int8Array | Int16Array | Int32Array>,
 	bits: number,
@@ -359,6 +469,14 @@ const makeMono = (
  * Extract interleaved [min, max] peaks from an AudioBuffer (or a raw
  * Float32Array channel): `samplesPerPixel` audio frames per peak, quantized to
  * `bits` (8/16/32). `isMono` averages the channels together (default true).
+ *
+ * @param source - an AudioBuffer or a single Float32 channel.
+ * @param samplesPerPixel - frames summarized per peak (default 10000).
+ * @param isMono - average all channels into one peak array (default true).
+ * @param cueIn - first sample frame to include.
+ * @param cueOut - last sample frame to include.
+ * @param bits - quantization depth: 8, 16 or 32 (default 8).
+ * @throws when `bits` is not 8, 16 or 32.
  */
 export const extractPeaks = (
 	source: AudioBuffer | Float32Array,
@@ -403,6 +521,14 @@ export const extractPeaks = (
 // Ported from the MIT-licensed "array-move" package (© Sindre Sorhus,
 // github.com/sindresorhus/array-move).
 
+/**
+ * Move the item at `fromIndex` to `toIndex` within `array`, mutating it in
+ * place. Negative indices count from the end; out-of-range sources are ignored.
+ *
+ * @param array - the array to reorder.
+ * @param fromIndex - index of the item to move.
+ * @param toIndex - destination index.
+ */
 export const arrayMoveMutable = <T>(array: T[], fromIndex: number, toIndex: number): void => {
 	const startIndex = fromIndex < 0 ? array.length + fromIndex : fromIndex;
 
@@ -414,6 +540,14 @@ export const arrayMoveMutable = <T>(array: T[], fromIndex: number, toIndex: numb
 	}
 };
 
+/**
+ * Immutable variant of {@link arrayMoveMutable}: returns a new array with the
+ * item moved, leaving the input untouched.
+ *
+ * @param array - the source array (not mutated).
+ * @param fromIndex - index of the item to move.
+ * @param toIndex - destination index.
+ */
 export const arrayMoveImmutable = <T>(
 	array: readonly T[],
 	fromIndex: number,

@@ -8,6 +8,7 @@ import { createWorkletEffectNode } from '../worklet'
  * setTargetAtTime smoothing.
  */
 export default class Delay extends Effect {
+	/** Build the effect: create the pp-delay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			feedback: { value: 0.5, max: 1, min: 0, type: 'float' },

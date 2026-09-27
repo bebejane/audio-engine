@@ -7,6 +7,7 @@ import { createWorkletEffectNode } from '../worklet'
  * DynamicsCompressorNode) runs in the pp-compressor worklet.
  */
 export default class Compressor extends Effect {
+	/** Build the effect: create the pp-compressor worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			threshold: { value: -24, max: 0, min: -100, type: 'integer' },
@@ -24,6 +25,7 @@ export default class Compressor extends Effect {
 		this.initParams()
 	}
 
+	/** Level above which compression starts, in dB (-100 - 0). */
 	get threshold(): number {
 		return this.options.threshold
 	}
@@ -33,6 +35,7 @@ export default class Compressor extends Effect {
 		this.node.parameters.get('threshold').value = value
 	}
 
+	/** Soft-knee width in dB (0 - 40). */
 	get knee(): number {
 		return this.options.knee
 	}
@@ -42,6 +45,7 @@ export default class Compressor extends Effect {
 		this.node.parameters.get('knee').value = value
 	}
 
+	/** Attack time (0 - 1). */
 	get attack(): number {
 		return this.options.attack
 	}
@@ -51,6 +55,7 @@ export default class Compressor extends Effect {
 		this.node.parameters.get('attack').value = value
 	}
 
+	/** Release time (0 - 1). */
 	get release(): number {
 		return this.options.release
 	}
@@ -60,6 +65,7 @@ export default class Compressor extends Effect {
 		this.node.parameters.get('release').value = value
 	}
 
+	/** Compression ratio (1 - 20). */
 	get ratio(): number {
 		return this.options.ratio
 	}

@@ -26,11 +26,18 @@ export interface MasterState {
 	pan: number;
 }
 
+/**
+ * Transport controller for the whole engine: play/stop/pause every sound,
+ * master mute/volume/rate/loop and the aggregate state broadcast as
+ * `masterstate`. Owned by the engine (`engine.master`).
+ */
 class Master {
 	engine: AudioEngine;
 	state: MasterState;
+	/** interval driving `masterelapsed` while playing (or null) */
 	elapsedInterval: ReturnType<typeof setInterval> | null = null;
 
+	/** Create the effect instance (stores engine + initial options). */
 	constructor(engine: AudioEngine, initialVolume: number) {
 		this.engine = engine;
 		this.state = {
@@ -53,6 +60,7 @@ class Master {
 		};
 	}
 
+	/** Stop every sound, emit `stopall` and refresh the aggregate duration. */
 	stop() {
 		this._clearElapsed();
 		this.engine.sounds.forEach((s) => this.engine.stop(s.id));
@@ -61,6 +69,10 @@ class Master {
 		this._updateDuration();
 	}
 
+	/**
+	 * Play every sound, emit `playall` and start the elapsed timer when
+	 * requested (per-call or engine-wide with `enableElapsed`).
+	 */
 	play(opt = { enableElapsed: false }) {
 		this.engine.sounds.forEach((s) => this.engine.play(s.id));
 		this.engine.emit('playall');
@@ -77,10 +89,12 @@ class Master {
 		}
 	}
 
+	/** True while at least one sound is playing. */
 	isPlaying() {
 		return this.engine.sounds.filter((s) => s.sound._playing).length > 0;
 	}
 
+	/** Mute/unmute every sound; returns the master muted flag. */
 	mute(on: boolean) {
 		this.engine.sounds.forEach((s) => {
 			this.engine.mute(s.id, on);
@@ -90,18 +104,21 @@ class Master {
 		return this.state.muted;
 	}
 
+	/** True only when every sound is muted (empty grid counts as muted). */
 	muted() {
 		// `sound.muted` is the method reference (always truthy) — the state flag
 		// is `_muted`. True only when every sound is muted.
 		return !this.engine.sounds.some((s) => !s.sound._muted);
 	}
 
+	/** Pause/resume every sound; emits `pauseall`. */
 	pause(on: boolean) {
 		this.engine.sounds.forEach((s) => this.engine.pause(s.id, on));
 		this.engine.emit('pauseall', on);
 		this.engine.emitMasterState({ paused: on, playing: this.isPlaying() });
 	}
 
+	/** Get (no arg) or set the master loop flag; emits `loopall`. */
 	loop(on?: boolean) {
 		if (on === undefined) return this.state.looping;
 
@@ -113,6 +130,7 @@ class Master {
 		return this.state.looping;
 	}
 
+	/** Get (no arg) or ramp the master output volume (0–1). */
 	volume(vol?: number) {
 		if (vol === undefined) return this.state.volume;
 		const next = Number(vol);
@@ -130,11 +148,13 @@ class Master {
 		return next;
 	}
 
+	/** Record a master pan value in the state (no audible effect yet). */
 	pan(deg: number) {
 		this.engine.emitMasterState({ pan: deg });
 		return this.state.pan;
 	}
 
+	/** Apply a playback rate to every sound and refresh the duration. */
 	rate(rate: number) {
 		this.engine.sounds.forEach((s) => s.sound.rate(rate));
 		this.engine.emitMasterState({ rate: rate });
@@ -142,12 +162,14 @@ class Master {
 		return 0;
 	}
 
+	/** Jump every sound to `sec` seconds. */
 	jump(sec: number) {
 		this.engine.sounds.forEach((s) => s.sound.jump(sec));
 		this.engine.emitMasterState();
 		return sec;
 	}
 
+	/** Get (no arg) or set the locked flag on every sound. */
 	locked(on?: boolean) {
 		if (on !== undefined) {
 			this.engine.sounds.forEach((s) => s.sound.lock(on));
@@ -156,6 +178,7 @@ class Master {
 		return this.engine.sounds.filter((s) => s.sound._locked).length > 0;
 	}
 
+	/** Longest real (rate/loop-adjusted) duration across all sounds. */
 	duration() {
 		let duration = 0;
 		this.engine.sounds.forEach((s) => {
@@ -164,15 +187,18 @@ class Master {
 		return duration;
 	}
 
+	/** True while at least one sound is soloed. */
 	solo() {
 		return this.engine.sounds.filter((s) => s.sound._solo).length > 0;
 	}
 
+	/** Reset every sound to its defaults and refresh the duration. */
 	reset() {
 		this.engine.sounds.forEach((s) => s.sound.reset());
 		this._updateDuration();
 	}
 
+	/** Emit `masterelapsed` (clamped to the master duration) on each tick. */
 	_checkElapsed() {
 		if (!this.state.playing) return this._clearElapsed();
 
@@ -182,12 +208,14 @@ class Master {
 		this.engine.emit('masterelapsed', el);
 	}
 
+	/** Stop the elapsed timer and reset elapsed/startedAt in the state. */
 	_clearElapsed() {
 		if (this.elapsedInterval) clearInterval(this.elapsedInterval);
 		this.elapsedInterval = null;
 		this.engine.emitMasterState({ elapsed: 0, startedAt: 0 });
 	}
 
+	/** Recompute and broadcast the aggregate duration. */
 	_updateDuration() {
 		const dur = this.duration();
 		this.engine.emitMasterState({ duration: dur });
