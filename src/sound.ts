@@ -1,5 +1,6 @@
 import { arrayMoveImmutable, reverse, slice } from './utils';
 import { EventEmitter } from 'events';
+import { ensureEffectsWorklet } from './effects/worklet';
 import type { Effect, EffectDefaults } from './effects/core';
 import type AudioEngine from './audioengine';
 
@@ -140,9 +141,9 @@ export interface SoundOptions extends Record<string, any> {
 }
 
 /**
- * One sampler cell: owns an AudioBufferSourceNode + a volume/fade/panner chain
- * and an ordered effect chain, and emits `state`/`*<id>` events the engine
- * forwards.
+ * One sampler cell: owns an AudioBufferSourceNode + a volume/loop-fade/panner
+ * chain and an ordered effect chain, and emits `state`/`*<id>` events the
+ * engine forwards.
  *
  * A Sound is created by `AudioEngine.add()`/`createSound()` and usually lives
  * for one grid cell. Its many `_<name>` fields mirror the `SoundDefaults`
@@ -163,7 +164,6 @@ class Sound extends EventEmitter {
 	effects: EffectSlot[];
 	spillOver: boolean;
 	panner: PannerNode;
-	fadeNode: GainNode;
 	source: AudioBufferSourceNode | null;
 	effectsInputNode: GainNode;
 	effectsOutputNode: GainNode;
@@ -185,11 +185,9 @@ class Sound extends EventEmitter {
 	_stretch: StretchLike | null;
 	_pitchPending: boolean;
 	_loopFadeDur: number;
-	_loopTimer: ReturnType<typeof setInterval> | null;
-	_cycle: number;
-	_nextWrap: number;
-	_fadeScheduledUntil: number;
-	_fadeActive: boolean;
+	_loopNode: AudioWorkletNode | null;
+	_loopNodePending: boolean;
+	_loopNodeFailed: boolean;
 	_bufferVersion: number;
 	_destroyed: boolean;
 	_offset: number;
@@ -277,19 +275,14 @@ class Sound extends EventEmitter {
 		this.spillOver = true;
 		// createPanner takes no options; 'equalpower' is already the default
 		this.panner = this.context.createPanner();
-		// dedicated gain for the loop-boundary fade envelope — kept separate
-		// from node.gain (volume/mute) so they never fight each other
-		this.fadeNode = this.context.createGain();
-		this.fadeNode.gain.value = 1;
 		this._loopFadeDur = 0.006;
-		// one interval drives both the look-ahead fade envelope and the loopend
-		// events (previously a setInterval + a separate setTimeout that had to be
-		// torn down and recreated on every rate change)
-		this._loopTimer = null;
-		this._cycle = 0;
-		this._nextWrap = 0;
-		this._fadeScheduledUntil = 0;
-		this._fadeActive = false;
+		// Loop clock + anti-click fade live on the audio thread (see
+		// src/effects/worklet/loopfade.js). The node is created lazily on the
+		// first loop and kept for the sound's lifetime; until it exists the
+		// sound plays straight into the panner.
+		this._loopNode = null;
+		this._loopNodePending = false;
+		this._loopNodeFailed = false;
 		this.source = null;
 		this.effectsInputNode = this.context.createGain();
 		this.effectsOutputNode = this.context.createGain();
@@ -331,7 +324,7 @@ class Sound extends EventEmitter {
 
 		if (this.source) {
 			this.source.removeEventListener('ended', this.onEnded);
-			this._clearLoopScheduler();
+			this._stopLoop();
 		}
 
 		if (this._playing && this.source) this.source.stop();
@@ -364,7 +357,7 @@ class Sound extends EventEmitter {
 		this._startedAt = this.context.currentTime;
 		this._playing = true;
 		this._emit('playing', true);
-		this._startLoopScheduler();
+		this._anchorLoop();
 
 		if (this.enableElapsed || opt.enableElapsed) {
 			this._clearElapsed();
@@ -407,8 +400,14 @@ class Sound extends EventEmitter {
 				lastOutput = effect;
 			});
 		lastOutput.connect(this.node);
-		this.node.connect(this.fadeNode);
-		this.fadeNode.connect(this.panner);
+		// loop worklet (when it exists) owns the anti-click fade; otherwise go
+		// straight to the panner
+		if (this._loopNode) {
+			this.node.connect(this._loopNode);
+			this._loopNode.connect(this.panner);
+		} else {
+			this.node.connect(this.panner);
+		}
 		this.panner.connect(this.engine.masterGain);
 		this._connected = true;
 	}
@@ -425,8 +424,11 @@ class Sound extends EventEmitter {
 			effects.forEach((e) => {
 				if (e.effect) e.effect.disconnect();
 			});
-			this.node.disconnect(this.fadeNode);
-			this.fadeNode.disconnect(this.panner);
+			this.node.disconnect();
+			// the loop node may not have been part of the previous chain yet
+			// (created after playback started), so disconnect all its outputs
+			// rather than a specific destination that may not be connected
+			if (this._loopNode) this._loopNode.disconnect();
 			this.panner.disconnect(this.engine.masterGain);
 		}
 		this._connected = false;
@@ -692,133 +694,96 @@ class Sound extends EventEmitter {
 		this.emit('elapsed', 0);
 	}
 	/**
-	 * Loop-boundary anti-click fades + loopend events, driven by one interval.
-	 * Native looping jumps from loopEnd to loopStart at a non-zero sample, which
-	 * clicks every cycle. We schedule a short gain envelope on `fadeNode` in
-	 * *audio time* (look-ahead scheduling) so the gain is ~0 exactly at each
-	 * wrap, with a ~6ms fade back in:
+	 * Loop clock + anti-click fades now live on the audio thread in the
+	 * `pp-loopfade` worklet (see src/effects/worklet/loopfade.js), so wrap
+	 * detection is sample accurate and survives main-thread timer throttling.
 	 *
-	 *   ...—silence—fadeBackIn→loopStart→...→loopEnd→silence—✓wrap—...
-	 *
-	 * The same tick advances `_nextWrap` and fires `loopend` at the exact wrap
-	 * time (not the tick time), so no separate setTimeout is needed. rate()
-	 * re-anchors an already-running scheduler instead of recreating it.
+	 * The worklet only shadows the native source's playhead, so it needs a
+	 * `(startTime, startPos)` anchor re-sent on play, resume and every
+	 * rate/loop change. Creates the node on first use.
 	 */
-	_startLoopScheduler() {
-		this._clearLoopScheduler();
-		this._armLoopScheduler(true);
-	}
-
-	/** Re-align a running scheduler after a rate/loop change (keeps the timer). */
-	_reanchorLoopScheduler() {
-		this._armLoopScheduler(true);
-	}
-
-	/** (Re)compute the wrap anchor + schedule the fade envelope. */
-	_armLoopScheduler(scheduleFades: boolean): void {
-		if (!this._loop || this._paused || this._rate <= 0 || !this.source) return;
-		const len = this._loopEnd - this._loopStart;
-		if (len <= 0) return;
-		const cycle = len / this._rate;
-		this._cycle = cycle;
-		this._nextWrap = this._computeNextWrap(len);
-		this._fadeActive = cycle >= this._loopFadeDur * 3; // too tiny to fade
-		this._fadeScheduledUntil = this._nextWrap;
-		if (scheduleFades && this._fadeActive) this._scheduleLoopFades(this._nextWrap, true);
-		if (!this._loopTimer) this._loopTimer = setInterval(() => this._loopTick(), 100);
-	}
-
-	/** Next loop boundary in audio time, from the current playback position. */
-	_computeNextWrap(len: number): number {
+	_anchorLoop(): void {
+		if (!this._loop || this._paused || !this._playing || this._rate <= 0) return;
+		if (!(this._loopEnd > this._loopStart)) return;
+		const node = this._loopNode;
+		if (!node) return void this._ensureLoopNode();
 		const now = this.context.currentTime;
-		const pos = ((now - this._startedAt) * this._rate + this._offset - this._loopStart) % len || 0;
-		const into = pos < 0 ? pos + len : pos;
-		return now + (len - into) / this._rate;
+		// playhead at `now`, from the same base the old scheduler used
+		const startPos = (now - this._startedAt) * this._rate + this._offset;
+		node.port.postMessage({
+			type: 'start',
+			startTime: now,
+			startPos,
+			loopStart: this._loopStart,
+			loopEnd: this._loopEnd,
+			rate: this._rate,
+			fadeDur: this._loopFadeDur,
+		});
 	}
 
-	/** Per-tick job: fire any wrapped `loopend` events and top up the fade envelope. */
-	_loopTick() {
-		if (!this._playing || this._paused || this._cycle <= 0) return this._clearLoopScheduler();
-		const now = this.context.currentTime;
-
-		// fire loopend at the wrap time for every wrap the tick may have skipped
-		// (background tabs throttle timers), then resync if still far behind
-		let wraps = 0;
-		while (now >= this._nextWrap && wraps < 8) {
-			const wrap = this._nextWrap;
-			this._nextWrap += this._cycle;
-			this._elapsed = 0;
-			this._startedAt = wrap;
-			this.emit('loopend', true);
-			wraps++;
-		}
-		if (now >= this._nextWrap) {
-			const skipped = Math.floor((now - this._nextWrap) / this._cycle) + 1;
-			this._nextWrap += skipped * this._cycle;
-			// keep pausedAt/bounded position sane after a long background gap
-			this._startedAt = now;
-		}
-
-		if (this._fadeActive && this._fadeScheduledUntil - now < 0.7)
-			this._scheduleLoopFades(this._fadeScheduledUntil, false);
+	/** Tell the loop worklet to stop counting/fading (pause, stop, loop off). */
+	_stopLoop(): void {
+		if (this._loopNode) this._loopNode.port.postMessage({ type: 'stop' });
 	}
 
-	/**
-	 * Schedule the next four loop-boundary fade envelopes on `fadeNode.gain`
-	 * (fade to ~0 at the wrap, back to 1 after). `startNow` also covers the
-	 * click at the start of playback.
-	 */
-	_scheduleLoopFades(from: number, startNow: boolean): void {
-		if (!this.fadeNode) return;
-		const g = this.fadeNode.gain;
-		const dur = this._loopFadeDur;
-		const cycle = this._cycle;
-		let t = from;
-
-		if (startNow) {
-			// cover the click at the moment playback begins (offset = loopStart)
-			try {
-				g.cancelScheduledValues(this.context.currentTime);
-			} catch (e) {}
-			g.setValueAtTime(0.0001, this.context.currentTime);
-			g.linearRampToValueAtTime(1, this.context.currentTime + dur);
-		} else {
-			try {
-				g.cancelScheduledValues(t - 0.02);
-			} catch (e) {}
-		}
-
-		// schedule the next several wraps: hold 1 → fade out to ~0 at the wrap
-		// → fade back in
-		for (let i = 0; i < 4; i++) {
-			g.setValueAtTime(1, t - dur);
-			g.linearRampToValueAtTime(0.0001, t);
-			g.setValueAtTime(0.0001, t);
-			g.linearRampToValueAtTime(1, t + dur);
-			t += cycle;
-		}
-		this._fadeScheduledUntil = t;
-		g.setValueAtTime(1, t);
+	/** Create the loop worklet node on demand; re-anchors once it exists. */
+	_ensureLoopNode(): void {
+		if (this._loopNode || this._loopNodeFailed || this._loopNodePending) return;
+		this._loopNodePending = true;
+		ensureEffectsWorklet(this.context)
+			.then(() => {
+				if (this._destroyed) return;
+				const base: AudioWorkletNodeOptions = {
+					numberOfInputs: 1,
+					numberOfOutputs: 1,
+				};
+				let node: AudioWorkletNode;
+				try {
+					node = new AudioWorkletNode(this.context, 'pp-loopfade', {
+						...base,
+						outputChannelCount: [2],
+					});
+				} catch (err) {
+					node = new AudioWorkletNode(this.context, 'pp-loopfade', base);
+				}
+				node.port.onmessage = (e) => this._onLoopMessage(e.data);
+				this._loopNode = node;
+				this._loopNodePending = false;
+				try {
+					// only rewire if a chain is up — a muted-at-start sound
+					// skips _connectChain and must not be connected just for
+					// the loop node
+					if (this._connected) this._connectChain();
+					this._anchorLoop();
+				} catch (err) {
+					console.error('loop worklet wiring failed', err);
+				}
+			})
+			.catch((err) => {
+				console.error('loop worklet unavailable', err);
+				this._loopNodePending = false;
+				this._loopNodeFailed = true;
+			});
 	}
 
-	/** Stop the loop ticker and release the fade envelope back to unity gain. */
-	_clearLoopScheduler() {
-		clearInterval(this._loopTimer);
-		this._loopTimer = null;
-		this._fadeActive = false;
-		if (!this.fadeNode) return;
-		try {
-			const g = this.fadeNode.gain;
-			g.cancelScheduledValues(this.context.currentTime);
-			g.setTargetAtTime(1, this.context.currentTime, 0.01);
-		} catch (e) {}
+	/** Handle a message from the loop worklet: currently just the wrap pulse. */
+	_onLoopMessage(data: { type?: string }): void {
+		if (!data || data.type !== 'loopend') return;
+		// re-anchor the main-thread playhead to the wrap, as the old scheduler
+		// did (`_startedAt = wrap`), so pause()/jump()/`elapsed` keep a bounded,
+		// loop-local position instead of counting from the original start
+		if (this._playing && !this._paused) {
+			this._startedAt = this.context.currentTime;
+			this._offset = this._loopStart;
+		}
+		this.emit('loopend', true);
 	}
 	/** Stop playback: clear timers, halt the source and emit ended/stop/playing. */
 	stop() {
 		if (!this.source) return;
 
 		this._clearElapsed();
-		this._clearLoopScheduler();
+		this._stopLoop();
 		clearTimeout(this.fadeOutTimeout);
 		clearTimeout(this.fadeInTimeout);
 
@@ -969,8 +934,8 @@ class Sound extends EventEmitter {
 	 */
 	pause(on?: boolean): boolean {
 		if (on) {
-			// stop fades/loopend while paused; resume (play) re-arms them
-			this._clearLoopScheduler();
+			// stop the loop clock while paused; resume (play) re-anchors it
+			this._stopLoop();
 			if (this.source) {
 				this._pausedAt = this._startedAt ? this.context.currentTime - this._startedAt : 0;
 				this.source.stop();
@@ -1051,11 +1016,8 @@ class Sound extends EventEmitter {
 
 		this._rate = rate !== undefined ? Number(rate) : this._rate;
 		this._emit('rate', this._rate);
-		// re-anchor an already-running scheduler in place (no interval churn
-		// while dragging the rate); (re)start it when it isn't running
-		if (this._loop && this._playing && !this._paused && this._rate > 0 && this._loopTimer)
-			this._reanchorLoopScheduler();
-		else this._startLoopScheduler();
+		// re-anchor the loop worklet in place (no timer churn while dragging)
+		this._anchorLoop();
 		return this._rate;
 	}
 
@@ -1195,9 +1157,9 @@ class Sound extends EventEmitter {
 			this.source.loop = on;
 		}
 		if (!this._loop) {
-			this._clearLoopScheduler();
+			this._stopLoop();
 		} else if (this._playing && !this._paused) {
-			this._startLoopScheduler();
+			this._anchorLoop();
 		}
 		this._emit('loop', on);
 		return this._loop;
@@ -1284,7 +1246,7 @@ class Sound extends EventEmitter {
 	 */
 	load(url?: string): void {
 		this._clearElapsed();
-		this._clearLoopScheduler();
+		this._stopLoop();
 		this._loaded = false;
 		this._error = null;
 		this._url = url !== undefined ? url : this._url;
@@ -1434,10 +1396,13 @@ class Sound extends EventEmitter {
 		this.buffer = null;
 		this._buffer = null;
 		this._clearElapsed();
-		this._clearLoopScheduler();
-		try {
-			if (this.fadeNode && this.fadeNode.disconnect) this.fadeNode.disconnect();
-		} catch (e) {}
+		this._stopLoop();
+		if (this._loopNode) {
+			try {
+				this._loopNode.disconnect();
+			} catch (e) {}
+			this._loopNode = null;
+		}
 		clearTimeout(this.fadeOutTimeout);
 	}
 	/** Debug logger (no-op unless `DEBUG` is on). */

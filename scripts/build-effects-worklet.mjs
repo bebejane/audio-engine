@@ -23,7 +23,8 @@ const sharedDir = join(effectsDir, 'worklet');
 const outFile = join(effectsDir, 'workletsource.generated.ts');
 
 // shared fragments, in dependency order (core helpers before korg35's factory)
-const SHARED = ['core.js', 'korg35.js'];
+// loopfade.js is a standalone processor used directly by Sound (not an effect)
+const SHARED = ['core.js', 'korg35.js', 'loopfade.js'];
 
 const read = (path) => readFileSync(path, 'utf8').trim();
 

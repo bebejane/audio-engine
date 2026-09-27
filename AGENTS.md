@@ -35,7 +35,7 @@ pnpm docs:api       # TypeDoc -> docs/api/ (generated, gitignored)
 ```
 src/
   audioengine.ts   AudioEngine — the public class (context, grid, devices, effects)
-  sound.ts         one sampler cell: source -> effects -> fade -> panner
+  sound.ts         one sampler cell: source -> effects -> loop worklet -> panner
   master.ts        transport controller (engine.master)
   model.ts         ModelManager — .purple.zip + presets
   automation.ts    records/loops engine parameter changes (R/L)

@@ -537,85 +537,85 @@ class AudioEngine extends EventEmitter {
 		});
 		// Sound.emitState only ever emits 'state' (never 'state<id>'), so this is
 		// the single forwarder that turns it into the per-column engine event
-		sound.on('state', (state, updated) => {
-			this.emit('state' + id, state, updated);
-		});
-		sound.on('effectparams', (id, type, opt) => {
-			this.emit('effectparams', id, type, opt);
-		});
-		sound.on('load', () => {
-			this.onLoad(id);
-			this.master._updateDuration();
-		});
-		sound.on('change', () => {
-			this.emit('change' + id, sound.duration());
-			this.emit('change', id, sound.duration());
-			this.master._updateDuration();
-		});
-
-		sound.on('ready', (id) => {
-			const status = {
-				total: this.sounds.length,
-				ready: this.ready(),
-			};
-			this.emit('ready', id, status);
-		});
-		sound.on('rate', () => {
-			if (this.enableElapsed) this.master._updateDuration();
-		});
-		sound.on('playing', (sid, on) => {
-			const isPlaying = this.master.isPlaying();
-			this.emitMasterState({
-				playing: isPlaying,
+		sound
+			.on('state', (state, updated) => {
+				this.emit('state' + id, state, updated);
+			})
+			.on('effectparams', (id, type, opt) => {
+				this.emit('effectparams', id, type, opt);
+			})
+			.on('load', () => {
+				this.onLoad(id);
+				this.master._updateDuration();
+			})
+			.on('change', () => {
+				this.emit('change' + id, sound.duration());
+				this.emit('change', id, sound.duration());
+				this.master._updateDuration();
+			})
+			.on('ready', (id) => {
+				const status = {
+					total: this.sounds.length,
+					ready: this.ready(),
+				};
+				this.emit('ready', id, status);
+			})
+			.on('rate', () => {
+				if (this.enableElapsed) this.master._updateDuration();
+			})
+			.on('playing', (sid, on) => {
+				const isPlaying = this.master.isPlaying();
+				this.emitMasterState({
+					playing: isPlaying,
+				});
+				// let the master meter settle rather than hard-pausing it, so a
+				// delay/reverb tail still shows after the last sound stops
+				this.outputAnalyser.setActive(isPlaying);
+				this.setAnalysersActive(sid, on === true);
+			})
+			.on('stop', () => {
+				const isPlaying = this.master.isPlaying();
+				this.emitMasterState({
+					playing: this.master.isPlaying(),
+				});
+				this.outputAnalyser.setActive(isPlaying);
+				this.setAnalysersActive(id, false);
+			})
+			.on('elapsed', (elapsed) => {
+				this.emit('elapsed' + id, elapsed);
+			})
+			.on('muted', (on) => {})
+			.on('loopend', (on) => {
+				this.emit('loopend' + id, on);
+			})
+			.on('loaderror', (err) => {
+				this.emit('loaderror', err, id);
+				this.onLoad(id);
+			})
+			.on('loop', (on) => {
+				this.emit('loop', id, on);
+				this.emit('loop' + id, {
+					loop: on,
+					loopStart: sound._loopStart,
+					loopEnd: sound._loopEnd,
+				});
+				this.master._updateDuration();
+			})
+			.on('ended', () => {
+				this.emit('ended', sound.id);
+				this.emit('ended' + sound.id);
+				const isPlaying = this.master.isPlaying();
+				this.emitMasterState({
+					playing: isPlaying,
+				});
+				this.outputAnalyser.setActive(isPlaying);
+			})
+			.on('solo', (on) => {
+				this.emit('solo', sound.id, on);
+				this.emitMasterState({
+					solo: this.master.solo(),
+				});
 			});
-			// let the master meter settle rather than hard-pausing it, so a
-			// delay/reverb tail still shows after the last sound stops
-			this.outputAnalyser.setActive(isPlaying);
-			this.setAnalysersActive(sid, on === true);
-		});
-		sound.on('stop', () => {
-			const isPlaying = this.master.isPlaying();
-			this.emitMasterState({
-				playing: this.master.isPlaying(),
-			});
-			this.outputAnalyser.setActive(isPlaying);
-			this.setAnalysersActive(id, false);
-		});
-		sound.on('elapsed', (elapsed) => {
-			this.emit('elapsed' + id, elapsed);
-		});
-		sound.on('muted', (on) => {});
-		sound.on('loopend', (on) => {
-			this.emit('loopend' + id, on);
-		});
-		sound.on('loaderror', (err) => {
-			this.emit('loaderror', err, id);
-			this.onLoad(id);
-		});
-		sound.on('loop', (on) => {
-			this.emit('loop', id, on);
-			this.emit('loop' + id, {
-				loop: on,
-				loopStart: sound._loopStart,
-				loopEnd: sound._loopEnd,
-			});
-			this.master._updateDuration();
-		});
-		sound.on('ended', () => {
-			this.emit('ended', sound.id);
-			this.emit('ended' + sound.id);
-			const isPlaying = this.master.isPlaying();
-			this.emitMasterState({
-				playing: isPlaying,
-			});
-			this.outputAnalyser.setActive(isPlaying);
-		});
-		sound.on('solo', (on) => {
-			this.emit('solo', sound.id, on);
-			this.emitMasterState({
-				solo: this.master.solo(),
-			});
-		});
 		this.emit('create', id, sound);
 		return sound;
 	}
@@ -674,7 +674,7 @@ class AudioEngine extends EventEmitter {
 		const sounds = this.sounds.map((i, idx) => {
 			if (i.id === id) {
 				const effectParams = i.sound._currentEffectParams();
-				i.sound = this.createSound(id, url, filename, i.sound.getSaveState());
+				i.sound = this.createSound(id, url, filename);
 				i.sound.load();
 				// the sound now owns a brand-new audio node — re-point its
 				// analysers, otherwise the meters keep reading the discarded one
@@ -1159,25 +1159,22 @@ class AudioEngine extends EventEmitter {
 	sample(id: string, start: boolean): Promise<unknown> | void {
 		if (!this.inputStreamSource) return Promise.reject('No audio input source selected');
 
-		if (start) {
-			this.stop(id);
-			return this.sampleRecorder
-				.record(this.inputStreamSource, id)
-				.then((recording: { url: string; filename: string }) => {
-					const sound = this.get(id) ? this.get(id).sound : null;
-					if (!sound) return console.error('NO SOUND there anymore', id);
+		if (!start) return this.sampleRecorder.stop();
 
-					this.replace(id, recording.url, recording.filename);
-					return recording;
-				})
-				.catch((err) => {
-					console.error(err);
-					throw err;
-				});
-		} else {
-			this.sampleRecorder.stop();
-		}
-		return;
+		this.stop(id);
+		return this.sampleRecorder
+			.record(this.inputStreamSource, id)
+			.then((recording: { url: string; filename: string }) => {
+				const sound = this.get(id) ? this.get(id).sound : null;
+				if (!sound) return console.error('NO SOUND there anymore', id);
+
+				this.replace(id, recording.url, recording.filename);
+				return recording;
+			})
+			.catch((err) => {
+				console.log(err);
+				throw err;
+			});
 	}
 	/** Cancel the in-progress sample take and clear the sampling state. */
 	cancelSample(id: string): void {

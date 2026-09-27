@@ -1057,5 +1057,55 @@ console.log('\nstopped source (empty input) => tails ring');
 	check('conv reverb tail keeps sounding after input stops', maxIdx(rtail).m > 0.2, `peak=${maxIdx(rtail).m.toFixed(4)}`);
 }
 
+// -- pp-loopfade (audio-thread loop clock + anti-click fade) ---------------
+console.log('\npp-loopfade');
+{
+	const proc = new registered['pp-loopfade']();
+	const events = [];
+	proc.port.postMessage = (m) => {
+		if (m && m.type === 'loopend') events.push(m);
+	};
+	const LOOP = 0.1; // 4410 samples at 44100
+	let frame = 0;
+	const run = (blocks) => {
+		const out = [];
+		for (let b = 0; b < blocks; b++) {
+			globalThis.currentTime = frame / SR;
+			const inL = new Float32Array(BLOCK).fill(1);
+			const outL = new Float32Array(BLOCK);
+			const outR = new Float32Array(BLOCK);
+			proc.process([[inL, inL], []], [[outL, outR], []], {});
+			out.push(outL);
+			frame += BLOCK;
+		}
+		return out;
+	};
+	const sample = (blocks, i) => blocks[Math.floor(i / BLOCK)][i % BLOCK];
+	const near = (blocks, c) => {
+		let m = 1;
+		for (let i = c - 3; i <= c + 3; i++) m = Math.min(m, Math.abs(sample(blocks, i)));
+		return m;
+	};
+
+	// start playing from loopStart
+	proc.port.onmessage({
+		data: { type: 'start', startTime: 0, startPos: 0, loopStart: 0, loopEnd: LOOP, rate: 1, fadeDur: 0.006 },
+	});
+	const blocks = run(Math.ceil((SR * 0.25) / BLOCK)); // ~0.25s => 2 wraps
+	check('loopend fires once per loop length', events.length === 2, `events=${events.length}`);
+	check('intro fade starts at ~0', Math.abs(sample(blocks, 0)) < 0.02, `s0=${sample(blocks, 0)}`);
+	check('gain reaches ~1 after the intro', Math.abs(sample(blocks, 1000) - 1) < 0.02, `s=${sample(blocks, 1000)}`);
+	check('fades to ~0 at the first wrap', near(blocks, 4410) < 0.05, `min=${near(blocks, 4410).toFixed(3)}`);
+	check('fades to ~0 at the second wrap', near(blocks, 8820) < 0.05, `min=${near(blocks, 8820).toFixed(3)}`);
+	check('passes through away from the wrap', Math.abs(sample(blocks, 6000) - 1) < 0.02, `s=${sample(blocks, 6000)}`);
+
+	// stop: no more events, gain released back to unity
+	proc.port.onmessage({ data: { type: 'stop' } });
+	const before = events.length;
+	const after = run(80);
+	check('loopend stops after stop', events.length === before, `events=${events.length}`);
+	check('gain released to unity after stop', Math.abs(after[40][0] - 1) < 0.02, `g=${after[40][0]}`);
+}
+
 console.log('\n' + (failures === 0 ? 'ALL DSP CHECKS PASSED' : failures + ' CHECKS FAILED'));
 process.exit(failures === 0 ? 0 : 1);

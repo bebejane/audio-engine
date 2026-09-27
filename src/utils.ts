@@ -488,6 +488,7 @@ export const extractPeaks = (
 ): Peaks => {
 	if ([8, 16, 32].indexOf(bits) < 0) throw new Error('Invalid number of bits specified for peaks.');
 
+	console.time('extractPeaks');
 	let peaks: Array<Int8Array | Int16Array | Int32Array> = [];
 	if (typeof (source as Float32Array).subarray === 'undefined') {
 		const buffer = source as AudioBuffer;
@@ -514,6 +515,7 @@ export const extractPeaks = (
 
 	if (isMono && peaks.length > 1) peaks = makeMono(peaks, bits);
 
+	console.timeEnd('extractPeaks');
 	return { length: peaks[0].length / 2, data: peaks, bits };
 };
 
