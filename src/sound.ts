@@ -160,6 +160,8 @@ export interface SoundOptions extends Record<string, any> {
 	enableLoops?: boolean;
 	enableMeter?: boolean;
 	enableElapsed?: boolean;
+	/** Signalsmith Stretch block size in ms (see AudioEngineOptions.pitchBlockMs). */
+	pitchBlockMs?: number;
 }
 
 /**
@@ -205,6 +207,16 @@ class Sound extends EventEmitter {
 	_pitchActive: boolean;
 	/** True while the Stretch node should stay in the graph for this playback. */
 	_pitchEngaged: boolean;
+	/**
+	 * Dry/wet gain pair around the shifter. While engaged the source feeds both
+	 * the dry gain and the shifter, so the pair can be crossfaded instead of the
+	 * shifter being spliced in — a cold insert drops its latency worth of audio
+	 * and the signal returning from that gap clicks.
+	 */
+	_dryGain: GainNode | null;
+	_wetGain: GainNode | null;
+	/** Target dry/wet mix: 0 = dry only, 1 = shifter only. */
+	_pitchMix: number;
 	_stretch: StretchLike | null;
 	_pitchPending: boolean;
 	/**
@@ -219,7 +231,18 @@ class Sound extends EventEmitter {
 	 * is this value while the shifter is engaged and 0 while it is not.
 	 */
 	_pitchLatency: number;
+	/**
+	 * Signalsmith Stretch block size (ms) for this sound's shifter. Equal to the
+	 * shifter's round-trip latency. Applied via `configure({ blockMs })` once the
+	 * node exists; see AudioEngineOptions.pitchBlockMs.
+	 */
+	_pitchBlockMs: number;
 	_loopFadeDur: number;
+	/**
+	 * Context time at which an in-flight splice fade ends (0 = none). While it is
+	 * still in the future `_applyGain` leaves the gain alone — see `_spliceFade`.
+	 */
+	_spliceEnds: number;
 	_channelNode: AudioWorkletNode | null;
 	_channelNodePending: boolean;
 	_channelNodeFailed: boolean;
@@ -303,6 +326,11 @@ class Sound extends EventEmitter {
 		this.enableLoops = opt.enableLoops;
 		this.enableMeter = opt.enableMeter;
 		this.enableElapsed = opt.enableElapsed;
+		// Stretch block size for this sound's shifter (see _ensurePitchNode); the
+		// library's own default is 120ms and we default to 40 (same quality on
+		// tonal material, 80ms less latency — measured).
+		this._pitchBlockMs =
+			Number.isFinite(opt.pitchBlockMs) && opt.pitchBlockMs > 0 ? opt.pitchBlockMs : 40;
 		this.node.gain.setValueAtTime(this._volume, this.context.currentTime);
 		(this.node as any).paused = true; // legacy marker, not part of GainNode
 		this.effects = [];
@@ -314,6 +342,10 @@ class Sound extends EventEmitter {
 		// createPanner takes no options; 'equalpower' is already the default
 		this.panner = this.context.createPanner();
 		this._loopFadeDur = 0.006;
+		// context time at which the in-flight splice fade ends (0 = none); see
+		// _spliceFade. While it is still in the future the volume envelope owns
+		// the gain, so _applyGain must not stomp it.
+		this._spliceEnds = 0;
 		// no pitch shifter in the path yet, so nothing delays the signal
 		this._chainDelay = 0;
 		// measured once the shifter node exists (see _ensurePitchNode)
@@ -340,6 +372,12 @@ class Sound extends EventEmitter {
 		this._pitchNode = null;
 		this._pitchNodeFailed = false;
 		this._pitchActive = Math.abs(this._pitch || 0) > 0.01;
+		// dry/wet pair around the shifter; created with the pitch node. Starts
+		// fully wet so a chain built before playback (play() connects first)
+		// behaves exactly like the old direct insert.
+		this._dryGain = null;
+		this._wetGain = null;
+		this._pitchMix = 1;
 		// whether the shifter is currently wired into the path. It is decoupled
 		// from `_pitchActive`: once engaged it stays in the graph (glided to 0
 		// semitones) until the next play(), because removing the latency-carrying
@@ -383,6 +421,15 @@ class Sound extends EventEmitter {
 			this._stopChannel();
 		}
 
+		// Replacing a live source is a hard cut (stop → rewire → start). Dip the
+		// gain across the whole seam so the old source's abrupt stop can't click;
+		// the new source additionally gets the channel processor's intro ramp.
+		// Skipped when the caller asked for an explicit fadeIn/fadeOut — those
+		// own the gain envelope themselves and would fight the dip.
+		const replacing = !!(this._playing && this.source);
+		const explicitFade = (opt.fadeIn || 0) !== 0 || ((opt.fadeOut || 0) !== 0 && !this._loop);
+		if (replacing && !explicitFade) this._spliceFade(0.002, 0.008);
+
 		if (this._playing && this.source) this.source.stop();
 
 		const soloOn = this.engine.master.solo();
@@ -399,6 +446,9 @@ class Sound extends EventEmitter {
 		this._chainDelay = this._pitchEngaged ? this._pitchLatency : 0;
 
 		if (!this._muted && (soloOn ? this._solo : true)) this._connectChain();
+		// a fresh chain starts fully wet when the shifter is part of it: it is
+		// built before the source starts, so there is no live signal to crossfade
+		if (this._pitchEngaged) this._setPitchMix(1, 0);
 
 		const ct = this.context.currentTime;
 		this._offset = Math.max(0, opt.start || this._pausedAt || this._loopStart || 0);
@@ -423,13 +473,99 @@ class Sound extends EventEmitter {
 		this._emit('playing', true);
 		// gate elapsed before anchoring so the processor knows to report it
 		this._emitElapsed = !!(this.enableElapsed || opt.enableElapsed);
-		this._anchorChannel();
+		this._anchorChannel(true);
 
 		if (this._emitElapsed) {
 			this._clearElapsed();
 			this.emit('elapsed', this._offset);
 		}
 		//console.log('play', this._offset, 'muted', this._muted, 'loop', this._loopStart + ' > ' + this._loopEnd, 'dur=', opt.duration, opt.fadeIn, opt.fadeOut)
+	}
+	/**
+	 * Schedule a short anti-click dip on the volume node to mask a hard seam in
+	 * the graph — a chain rebuild or a source replace while audio is flowing.
+	 *
+	 * The down-ramp is short enough to hit zero at the render quantum where the
+	 * graph change actually lands, so the seam happens at (near) zero gain; the
+	 * up-ramp then eases back to the current target. All of it is scheduled ahead
+	 * of time — deliberately no `setTimeout`, which is throttled to seconds in a
+	 * background tab and would trade a click for a dropout.
+	 *
+	 * @param down - seconds to ramp down (must be short so the seam lands at 0)
+	 * @param up - seconds to ramp back up to the target
+	 */
+	_spliceFade(down = 0.002, up = 0.008): void {
+		if (!this.node) return;
+		const target = this._targetGain();
+		// silent (muted): nothing audible to mask, and dipping would only block
+		// _applyGain for the length of the envelope
+		if (target === 0) return;
+		const g = this.node.gain;
+		const t = this.context.currentTime;
+		g.cancelScheduledValues(t);
+		g.setValueAtTime(g.value, t);
+		g.linearRampToValueAtTime(0, t + down);
+		g.setValueAtTime(0, t + down);
+		g.linearRampToValueAtTime(target, t + down + up);
+		this._spliceEnds = t + down + up;
+	}
+	/**
+	 * Rebuild a live chain with a short gain dip around it. Use this instead of a
+	 * bare {@link _connectChain} for any mid-playback mutation (effect
+	 * add/remove/bypass, the channel node landing, first pitch engage): the
+	 * blanket disconnect/reconnect would otherwise cut the signal and click.
+	 */
+	_rebuildChain(): void {
+		if (this._playing && this.source && this._connected) this._spliceFade();
+		this._connectChain();
+	}
+	/** Lazily create the dry/wet pair the engaged shifter is crossfaded across. */
+	_ensurePitchGains(): boolean {
+		if (!this._pitchNode) return false;
+		if (!this._dryGain) {
+			this._dryGain = this.context.createGain();
+			this._dryGain.gain.value = 1 - this._pitchMix;
+		}
+		if (!this._wetGain) {
+			this._wetGain = this.context.createGain();
+			this._wetGain.gain.value = this._pitchMix;
+		}
+		return true;
+	}
+	/**
+	 * Crossfade the pitch dry/wet pair (0 = dry only, 1 = shifter only).
+	 *
+	 * `delay` postpones the ramp so the shifter can prime for its latency before
+	 * its output is trusted: a freshly connected Stretch node emits silence and
+	 * then signal, and that onset would click if it arrived at full wet.
+	 */
+	_setPitchMix(mix: number, ramp = 0.02, delay = 0): void {
+		const from = this._pitchMix;
+		this._pitchMix = mix;
+		if (!this._dryGain || !this._wetGain) return;
+		const t = this.context.currentTime;
+		const start = t + Math.max(0, delay);
+		const dry = this._dryGain.gain;
+		const wet = this._wetGain.gain;
+		dry.cancelScheduledValues(t);
+		wet.cancelScheduledValues(t);
+		dry.setValueAtTime(1 - from, t);
+		dry.setValueAtTime(1 - from, start);
+		dry.linearRampToValueAtTime(1 - mix, start + ramp);
+		wet.setValueAtTime(from, t);
+		wet.setValueAtTime(from, start);
+		wet.linearRampToValueAtTime(mix, start + ramp);
+	}
+	/**
+	 * Bring the (already built) shifter into the path without a seam. The splice
+	 * is gain-neutral because the dry branch stays at full level, and the
+	 * crossfade to wet only starts once the shifter has primed for its latency.
+	 */
+	_engagePitchLive(): void {
+		const live = !!(this._playing && this.source && this._connected);
+		if (live) this._setPitchMix(0, 0);
+		this._rebuildChain();
+		if (live) this._setPitchMix(1, 0.02, this._pitchLatency > 0 ? this._pitchLatency : 0.05);
 	}
 	/**
 	 * (Re)build the audio graph from the source through the optional pitch node,
@@ -441,25 +577,30 @@ class Sound extends EventEmitter {
 		if (!this.source) return;
 
 		this._disconnectChain();
-		const effects = this.effects;
-		// source or effect — both expose `.connect()`
-		type ChainNode = { connect(node: AudioNode): unknown };
-		let lastOutput: ChainNode = this.source as unknown as ChainNode;
-		// pitch shifter first so the effects process the transposed signal
-		if (this._pitchEngaged && !this._pitchNode) this._ensurePitchNode();
-		if (this._pitchEngaged && this._pitchNode) {
-			lastOutput.connect(this._pitchNode);
-			lastOutput = this._pitchNode;
-		}
-		effects
+		const effects = this.effects
 			// `e.effect` is null while a lazily-added effect is still bypassed
 			.filter((e) => !e.bypassed && e.effect)
-			.forEach((e) => {
-				const effect = e.effect as Effect;
-				lastOutput.connect(effect.inputNode);
-				lastOutput = effect;
-			});
-		lastOutput.connect(this.node);
+			.map((e) => e.effect as Effect);
+		// the first node after the source stage: the first effect, or the volume
+		// node when the chain is empty
+		const nextInput: AudioNode = effects.length ? effects[0].inputNode : this.node;
+		// pitch shifter first so the effects process the transposed signal. While
+		// engaged it runs as a parallel dry/wet pair rather than a hard insert, so
+		// it can be crossfaded in mid-playback (see _setPitchMix) instead of
+		// dropping its latency worth of audio and clicking.
+		if (this._pitchEngaged && !this._pitchNode) this._ensurePitchNode();
+		if (this._pitchEngaged && this._ensurePitchGains()) {
+			this.source.connect(this._dryGain!);
+			this.source.connect(this._pitchNode!);
+			this._pitchNode!.connect(this._wetGain!);
+			this._dryGain!.connect(nextInput);
+			this._wetGain!.connect(nextInput);
+		} else {
+			this.source.connect(nextInput);
+		}
+		effects.forEach((effect, i) => {
+			effect.connect(i < effects.length - 1 ? effects[i + 1].inputNode : this.node);
+		});
 		// channel processor (when it exists) owns the anti-click fade; otherwise
 		// go straight to the panner
 		if (this._channelNode) {
@@ -479,6 +620,17 @@ class Sound extends EventEmitter {
 			if (this._pitchNode) {
 				try {
 					this._pitchNode.disconnect();
+				} catch (e) {}
+			}
+			// the dry/wet pair around the shifter (see _connectChain)
+			if (this._dryGain) {
+				try {
+					this._dryGain.disconnect();
+				} catch (e) {}
+			}
+			if (this._wetGain) {
+				try {
+					this._wetGain.disconnect();
 				} catch (e) {}
 			}
 			effects.forEach((e) => {
@@ -583,7 +735,7 @@ class Sound extends EventEmitter {
 					Object.keys(e.defaults).forEach((k) => {
 						if (e.values[k] !== undefined) inst[k] = e.values[k];
 					});
-				if (!e.bypassed) this._connectChain();
+				if (!e.bypassed) this._rebuildChain();
 				this._emit('effectparams', this._currentEffectParams(idx));
 			})
 			.catch((err: unknown) => {
@@ -601,7 +753,7 @@ class Sound extends EventEmitter {
 		this._invalidateEffects();
 		// lazily build the node the first time a pending effect is enabled
 		if (!bypass && !e.effect) this._materialize(idx);
-		this._connectChain();
+		this._rebuildChain();
 		this._emit('effectbypass', idx, bypass);
 		return e;
 	}
@@ -611,7 +763,7 @@ class Sound extends EventEmitter {
 		effects.forEach((eff, idx) => (eff.idx = idx));
 		this.effects = effects || [];
 		this._invalidateEffects();
-		this._connectChain();
+		this._rebuildChain();
 		this._emit('removeeffect', idx);
 		return this._currentEffectParams();
 	}
@@ -620,7 +772,7 @@ class Sound extends EventEmitter {
 		this.effects = arrayMoveImmutable(this.effects, idx, toIdx);
 		this.effects.forEach((e, idx) => (e.idx = idx));
 		this._invalidateEffects();
-		this._connectChain();
+		this._rebuildChain();
 		// notify the app like add/remove/bypass do — without this the chain
 		// order change is invisible to the UI until some other state event fires
 		this._emit('moveeffect', idx, toIdx);
@@ -657,7 +809,7 @@ class Sound extends EventEmitter {
 	disableEffects() {
 		this.effects.forEach((e, idx) => (e.bypassed = true));
 		this._invalidateEffects();
-		this._connectChain();
+		this._rebuildChain();
 		this._effectsEnabled = false;
 		this._emit('effectsenabled', false);
 	}
@@ -670,7 +822,7 @@ class Sound extends EventEmitter {
 		});
 		this._invalidateEffects();
 		this._effectsEnabled = true;
-		this._connectChain();
+		this._rebuildChain();
 		this._emit('effectsenabled', true);
 	}
 	/**
@@ -758,8 +910,13 @@ class Sound extends EventEmitter {
 	 * elapsed). The native source does the playback; the processor shadows its
 	 * position, so the anchor is re-sent on play, resume and every rate/loop
 	 * change. Creates the node on first use.
+	 *
+	 * @param restart - re-arm the intro fade. Only a genuine (re)start of playback
+	 * should pass `true`; the live re-anchors sent while dragging rate/loop must
+	 * not, or the fade (a ramp up from 0) would be re-armed at drag frequency and
+	 * chop the gain instead of covering a single start.
 	 */
-	_anchorChannel(): void {
+	_anchorChannel(restart = false): void {
 		if (!this._playing || this._paused || this._rate <= 0) return;
 		const looping = this._loop && this._loopEnd > this._loopStart;
 		if (!looping && !this._emitElapsed) return;
@@ -770,6 +927,7 @@ class Sound extends EventEmitter {
 		const startPos = (now - this._startedAt) * this._rate + this._offset;
 		node.port.postMessage({
 			type: 'start',
+			restart,
 			startTime: now,
 			startPos,
 			loop: looping,
@@ -892,7 +1050,8 @@ class Sound extends EventEmitter {
 					// only rewire if a chain is up — a muted-at-start sound
 					// skips _connectChain and must not be connected just for
 					// the channel node
-					if (this._connected) this._connectChain();
+					if (this._connected) this._rebuildChain();
+					// the node starts `started: false`, so it fades in regardless
 					this._anchorChannel();
 					this._sendEq();
 				} catch (err) {
@@ -1149,7 +1308,13 @@ class Sound extends EventEmitter {
 	// parameter updates (mouse moves) converge without zipper noise
 	_applyGain() {
 		if (!this.node) return;
-		this.node.gain.setTargetAtTime(this._targetGain(), this.context.currentTime, 0.02);
+		const now = this.context.currentTime;
+		// a splice envelope owns the gain until it finishes; a volume change that
+		// lands mid-dip is dropped (callers re-issue it as they continue to set
+		// the value, and the envelope ends within ~10ms)
+		if (this._spliceEnds && now < this._spliceEnds) return;
+		this._spliceEnds = 0;
+		this.node.gain.setTargetAtTime(this._targetGain(), now, 0.02);
 	}
 
 	/** Get (no arg) or set the channel volume (0–1); always re-applies the gain. */
@@ -1172,9 +1337,14 @@ class Sound extends EventEmitter {
 	 */
 	rate(rate?: number): number {
 		if (rate !== undefined && this.source && this._rate !== rate) {
-			this.source.playbackRate.cancelScheduledValues(this.context.currentTime);
-			this.source.playbackRate.setValueAtTime(this._rate, this.context.currentTime + 0.01);
-			this.source.playbackRate.linearRampToValueAtTime(rate, this.context.currentTime + 0.05);
+			// ramp from the *live* value: cancelling to `this._rate` (the previous
+			// target) snapped the playhead back whenever a prior ramp was still in
+			// flight, stepping the pitch/tempo
+			const now = this.context.currentTime;
+			const from = this.source.playbackRate.value;
+			this.source.playbackRate.cancelScheduledValues(now);
+			this.source.playbackRate.setValueAtTime(from, now);
+			this.source.playbackRate.linearRampToValueAtTime(rate, now + 0.05);
 		}
 
 		this._rate = rate !== undefined ? Number(rate) : this._rate;
@@ -1197,6 +1367,14 @@ class Sound extends EventEmitter {
 	 * mid-playback jumps the signal by its latency and clicks; keeping it in
 	 * makes flattening silent (at the cost of the shifter's latency until the
 	 * next play, which starts dry again).
+	 *
+	 * Wiring it in mid-playback is also done without a seam: the chain is rebuilt
+	 * as a parallel dry/wet pair and crossfaded once the shifter has primed
+	 * (see {@link _engagePitchLive}), instead of a hard insert that drops the
+	 * shifter's latency of audio and clicks when the signal returns.
+	 *
+	 * The shifter's latency equals its block size, set from `pitchBlockMs` (see
+	 * AudioEngineOptions) and defaulting to 40 ms rather than the library's 120.
 	 */
 	pitch(semitones?: number): number {
 		if (semitones !== undefined) {
@@ -1209,10 +1387,11 @@ class Sound extends EventEmitter {
 				this._pitchEngaged = true;
 				if (!this._pitchNode) this._ensurePitchNode();
 				else if (this.source && !wasEngaged) {
-					// engaging mid-playback puts the shifter's delay into the
-					// path immediately; adopt it so the loop fade stays aligned
+					// bring a warm shifter into a live path via the dry/wet
+					// crossfade rather than a hard insert (see _engagePitchLive);
+					// adopt its delay so the loop fade stays aligned
 					this._chainDelay = this._pitchLatency;
-					this._connectChain();
+					this._engagePitchLive();
 				}
 			}
 			// flattening does NOT disconnect the node — see the method doc
@@ -1259,30 +1438,46 @@ class Sound extends EventEmitter {
 					outputChannelCount: [2],
 				}),
 			)
-			.then((stretch) => {
+			.then(async (stretch) => {
 				this._stretch = stretch;
 				this._pitchNode = stretch;
 				this._pitchPending = false;
 				if (stretch.start) stretch.start();
 				this._scheduleStretch();
-				if (this.source && this._pitchEngaged) this._connectChain();
-				// Read the shifter's delay once so the channel processor can put
-				// the loop fade on the *audible* wrap. `latency()` is a remote
-				// call (async), and the anchor has usually already gone out by
-				// now, so re-anchor when it lands.
+				// Apply this sound's block size BEFORE reading the latency: the
+				// shifter's round-trip latency *is* its block size, so the value
+				// read below (and everything downstream — the loop-fade placement
+				// and the crossfade priming) depends on configuring it first.
+				if (stretch.configure && this._pitchBlockMs) {
+					try {
+						await stretch.configure({ blockMs: this._pitchBlockMs });
+					} catch (e) {
+						// keep the library default if the config is rejected
+					}
+				}
+				// Read the shifter's delay *before* wiring it in: the channel
+				// processor needs it to place the loop fade on the audible wrap,
+				// and the crossfade below needs it to wait out the primer. This
+				// is a remote call (async), so the wiring is deferred to it.
+				let seconds = 0;
 				if (stretch.latency) {
-					stretch
-						.latency()
-						.then((seconds: number) => {
-							const next = typeof seconds === 'number' && seconds > 0 ? seconds : 0;
-							this._pitchLatency = next;
-							// only in force while the shifter is actually engaged
-							const applied = this._pitchEngaged ? next : 0;
-							if (applied === this._chainDelay) return;
-							this._chainDelay = applied;
-							this._anchorChannel();
-						})
-						.catch(() => {});
+					try {
+						seconds = await stretch.latency();
+					} catch (e) {
+						seconds = 0;
+					}
+				}
+				const next = typeof seconds === 'number' && seconds > 0 ? seconds : 0;
+				this._pitchLatency = next;
+				// only in force while the shifter is actually engaged
+				const applied = this._pitchEngaged ? next : 0;
+				const changed = applied !== this._chainDelay;
+				if (changed) this._chainDelay = applied;
+				if (this.source && this._pitchEngaged) {
+					this._engagePitchLive();
+					if (changed) this._anchorChannel();
+				} else if (changed) {
+					this._anchorChannel();
 				}
 			})
 			.catch((err) => {

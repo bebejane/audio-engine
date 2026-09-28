@@ -46,6 +46,7 @@ const defaultOptions: AudioEngineOptions = {
 	enableLoops: false,
 	enableElapsed: false,
 	preloadPitch: true,
+	pitchBlockMs: 40,
 	processSample: false,
 	modelsPath: '/models',
 	audioPath: '/audio',
@@ -105,6 +106,11 @@ class AudioEngine extends EventEmitter {
 	enableElapsed: boolean;
 	/** Warm the pitch shifter at startup (see AudioEngineOptions.preloadPitch). */
 	preloadPitch: boolean;
+	/**
+	 * Signalsmith Stretch block size in ms, passed to every Sound's shifter (see
+	 * AudioEngineOptions.pitchBlockMs). Equal to the shifter's round-trip latency.
+	 */
+	pitchBlockMs: number;
 	_onDeviceChange: (() => void) | null;
 	/** In-flight bootstrap promise, so concurrent init() calls share one run. */
 	_bootstrap: Promise<InitResult> | null;
@@ -137,6 +143,10 @@ class AudioEngine extends EventEmitter {
 		this.enableLoops = o.enableLoops;
 		this.enableElapsed = o.enableElapsed;
 		this.preloadPitch = !!o.preloadPitch;
+		this.pitchBlockMs =
+			Number.isFinite(o.pitchBlockMs) && (o.pitchBlockMs as number) > 0
+				? (o.pitchBlockMs as number)
+				: 40;
 		this.processSample = o.processSample;
 		this.modelsPath = o.modelsPath || '/models';
 		this.audioPath = o.audioPath || '/audio';
@@ -550,6 +560,7 @@ class AudioEngine extends EventEmitter {
 			local: this.electron,
 			enableLoops: this.enableLoops,
 			enableElapsed: this.enableElapsed,
+			pitchBlockMs: this.pitchBlockMs,
 			...opt,
 		});
 		// Sound.emitState only ever emits 'state' (never 'state<id>'), so this is
@@ -1151,6 +1162,7 @@ class AudioEngine extends EventEmitter {
 	playSound(url: string, opt: Record<string, any> = {}): Sound {
 		const sound = new Sound(String(Date.now()), url, this, {
 			filename: 'Temp.wav',
+			pitchBlockMs: this.pitchBlockMs,
 			...opt,
 		});
 		/*
@@ -1422,18 +1434,17 @@ class AudioEngine extends EventEmitter {
 	/**
 	 * Get (creating on first use) the analyser for a sound and type, or the
 	 * shared 'input'/'master' analysers. Returns undefined for a cell with no
-	 * sound.
+	 * sound. Subscribe to the result with
+	 * `analyser.addEventListener(type, opt, cb)`.
 	 *
 	 * @param id - sound id, or 'input' / 'master'.
 	 * @param type - 'volume' | 'timedomain' | 'frequency'.
 	 * @param opt - analyser options (fftSize, cuts, …).
-	 * @param cb - optional per-read callback.
 	 */
 	analyse(
 		id: string,
 		type: string,
 		opt?: Record<string, unknown>,
-		cb?: (data: unknown, options: unknown) => void,
 	): Analyser | undefined {
 		if (id === 'input') return this.inputAnalyser;
 		if (id === 'master') return this.outputAnalyser;

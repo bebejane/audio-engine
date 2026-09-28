@@ -202,15 +202,22 @@ await phase('pitch flatten keeps shifter engaged', async () => {
 	// follow the topology rather than the mere existence of the shifter node:
 	// a remembered latency left applied while the shifter is out of the path puts
 	// every fade one latency early (audible as a click at each wrap).
-	sound._pitchLatency = 0.12;
+	// (0.04 here is the engine's `pitchBlockMs` default — the shifter's latency
+	// equals its block size; this is a stub value for the topology test, not a
+	// live measurement.)
+	sound._pitchLatency = 0.04;
 	sound._pitchActive = true;
 	sound.play();
-	check('pitched playback adopts the shifter delay', sound._chainDelay === 0.12, `delay=${sound._chainDelay}`);
+	check('pitched playback adopts the shifter delay', sound._chainDelay === 0.04, `delay=${sound._chainDelay}`);
 
 	sound._pitchActive = false;
 	sound.play();
 	check('flat playback clears the shifter delay', sound._chainDelay === 0, `delay=${sound._chainDelay}`);
-	check('the measurement is still remembered', sound._pitchLatency === 0.12, `latency=${sound._pitchLatency}`);
+	check('the measurement is still remembered', sound._pitchLatency === 0.04, `latency=${sound._pitchLatency}`);
+
+	// the shifter block size is configured to the engine default and is what
+	// makes the latency above (40ms, not the library's 120ms)
+	check('shifter block size defaults to 40ms', sound._pitchBlockMs === 40, `got=${sound._pitchBlockMs}`);
 });
 
 // 3c. channel EQ churn -----------------------------------------------------
@@ -279,7 +286,7 @@ await phase('analyser churn', async () => {
 		for (let i = 0; i < COLUMNS; i++) {
 			const id = 'c' + i;
 			for (const type of ['volume', 'timedomain', 'frequency']) {
-				const a = engine.analyse(id, type, {}, () => {});
+				const a = engine.analyse(id, type, {});
 				if (a) attached.push(a);
 			}
 		}
@@ -404,7 +411,7 @@ await phase('mixed soak', async () => {
 				engine.extractPeaks(id, 80 + ((rnd() * 40) | 0));
 				break;
 			case 9: {
-				const a = engine.analyse(id, 'volume', {}, () => {});
+				const a = engine.analyse(id, 'volume', {});
 				if (a) engine.removeAnalyser(a);
 				break;
 			}

@@ -4,3 +4,4 @@ node_modules
 docs/api
 .playwright-mcp
 tests/browser/build
+.openchamber

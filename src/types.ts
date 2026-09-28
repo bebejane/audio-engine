@@ -84,6 +84,19 @@ export interface AudioEngineOptions {
 	 * true; set false to skip the warm-up entirely.
 	 */
 	preloadPitch?: boolean;
+	/**
+	 * Block size, in milliseconds, for the Signalsmith Stretch pitch shifter —
+	 * which is also its round-trip latency: the shifter's latency equals its
+	 * block size one-for-one (measured), so this is the latency/quality dial.
+	 *
+	 * Defaults to 40 ms. The vendored library's own default is 120 ms, which buys
+	 * no measurable quality advantage for tonal material but adds 80 ms of delay;
+	 * 20 ms was measured to break the shift up (the transposed tone collapses to
+	 * roughly a fifth of its level), so 40 ms sits just above the point where the
+	 * STFT still has enough context. Raise it if very short or percussive material
+	 * smears; it only affects sounds actually using pitch.
+	 */
+	pitchBlockMs?: number;
 	/** Trim/normalize recorded samples; `false` disables processing. */
 	processSample?: boolean | ProcessSampleOptions;
 	/** Base path model zips/index.json are fetched from (default '/models'). */

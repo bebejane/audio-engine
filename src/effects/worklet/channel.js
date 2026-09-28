@@ -27,6 +27,7 @@ class ChannelProcessor extends AudioWorkletProcessor {
 		this.startPos = 0; // buffer-seconds playhead at the anchor
 		this.floorCount = 0; // wraps completed up to the previous block
 		this.sinceStart = 0; // output frames since the anchor (intro fade)
+		this.started = false; // a sound has been anchored at least once
 		this.gain = 1; // current anti-click gain (released on stop)
 		this.rebaseline = false;
 		// Signal delay of anything between the source and this node (the pitch
@@ -58,7 +59,13 @@ class ChannelProcessor extends AudioWorkletProcessor {
 			this.delay = d.delay > 0 ? d.delay : 0;
 			this.startTime = d.startTime;
 			this.startPos = d.startPos;
-			this.sinceStart = 0;
+			// The intro fade belongs to a *restart* only. A live re-anchor — the
+			// one sent on every rate/loop change — must NOT re-arm it: the fade is
+			// a ramp up from 0, so re-arming it at drag frequency (~60/s) chopped
+			// the gain to ~0.4 sixty times a second and crackled. A sound that has
+			// never been started (or was stopped) still fades in.
+			if (d.restart || !this.started) this.sinceStart = 0;
+			this.started = true;
 			this.emitElapsed = !!d.elapsed;
 			this.elapsedPeriod = d.elapsedPeriod > 0 ? d.elapsedPeriod : 0.03;
 			this.elapsedAccum = 0;
@@ -67,6 +74,7 @@ class ChannelProcessor extends AudioWorkletProcessor {
 			this.rebaseline = true;
 		} else if (d.type === 'stop') {
 			this.active = false;
+			this.started = false;
 		} else if (d.type === 'eqAll') {
 			this.setEqAll(d.bands);
 		} else if (d.type === 'eq') {
@@ -160,10 +168,14 @@ class ChannelProcessor extends AudioWorkletProcessor {
 					r = this.eqR[bj].process(r);
 				}
 			}
+			// Anti-click gain, sample-accurate. The intro ramp covers the click
+			// at (re)start on *every* anchored play — one-shot as well as looped;
+			// it used to live inside the loop branch, so a non-looping start went
+			// straight to unity and could click.
+			g = 1;
+			if (this.active && this.sinceStart + i < fadeFrames)
+				g = (this.sinceStart + i) / fadeFrames;
 			if (looping) {
-				g = 1;
-				// intro ramp covers the click at (re)start
-				if (this.sinceStart + i < fadeFrames) g = (this.sinceStart + i) / fadeFrames;
 				if (fadeActive) {
 					// The wrap this fade belongs to is heard `delay` seconds after
 					// the clock above reports it, so look ahead by that much and
@@ -179,20 +191,20 @@ class ChannelProcessor extends AudioWorkletProcessor {
 						else if (since < this.fadeDur) g = Math.min(g, since / this.fadeDur);
 					}
 				}
-				this.gain = g;
 				u += step;
-			} else {
-				// release the anti-click gain back to unity after a stop, and
-				// keep a non-looping channel at unity
-				this.gain += (1 - this.gain) * CHANNEL_RELEASE;
+			} else if (!this.active) {
+				// release the anti-click gain back to unity after a stop
+				g = Math.min(g, this.gain + (1 - this.gain) * CHANNEL_RELEASE);
 			}
+			this.gain = g;
 			outL[i] = l * this.gain;
 			if (outR) outR[i] = r * this.gain;
 		}
 
 		if (this.active) {
+			// intro-ramp progress — looped and one-shot playback alike
+			this.sinceStart += n;
 			if (looping) {
-				this.sinceStart += n;
 				var floorEnd = Math.floor(u / len);
 				if (floorEnd > this.floorCount) {
 					this.port.postMessage({ type: 'loopend', wraps: floorEnd - this.floorCount });

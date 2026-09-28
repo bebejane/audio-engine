@@ -14,8 +14,10 @@
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"test": "node tests/verify-effects.mjs",
+		"test:render": "node --import ./tests/register-ts.mjs tests/render-effects.mjs",
 		"test:stress": "node --import ./tests/register-ts.mjs tests/stress-engine.mjs",
 		"test:stress:heavy": "node --import ./tests/register-ts.mjs tests/stress-engine.mjs --heavy",
+		"test:stress:real": "node --import ./tests/register-ts.mjs tests/stress-real.mjs",
 		"stress:browser": "node tests/browser/build.mjs && node tests/browser/serve.mjs",
 		"stress:browser:build": "node tests/browser/build.mjs",
 		"docs:api": "typedoc && pnpx serve ./docs/api",

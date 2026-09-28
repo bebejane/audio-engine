@@ -6,6 +6,9 @@
 pnpm install
 pnpm typecheck      # tsc --noEmit
 pnpm test           # offline DSP harness (all 20 effect processors)
+pnpm test:render    # render all 20 effects through a real Web Audio impl
+pnpm test:stress    # engine soak vs the Web Audio mock (virtual clock)
+pnpm test:stress:real  # engine soak vs real web-audio-api (real clock)
 pnpm worklet:gen    # regenerate src/effects/workletsource.generated.ts
 pnpm worklet:check  # fail if the generated worklet source is stale
 pnpm docs:api       # generate the TypeDoc site into docs/api/
@@ -28,6 +31,10 @@ src/                     engine code (TypeScript)
   pitch/                 Signalsmith Stretch loader + vendored .mjs
 scripts/build-effects-worklet.mjs  assembles the worklet source
 tests/verify-effects.mjs           offline DSP regression harness
+tests/render-effects.mjs           all 20 effects through a real Web Audio impl
+tests/stress-engine.mjs            engine soak vs the Web Audio mock (virtual)
+tests/stress-real.mjs              engine soak vs real web-audio-api (wall clock)
+tests/web-audio-api-node.mjs       Node environment for the real-engine lane
 docs/                              this documentation (+ generated docs/api/)
 ```
 
@@ -64,6 +71,28 @@ hand-written guides live alongside this file.
 AudioWorklet shim and runs each of the 20 processors offline, checking for
 finite output, silence handling and known DSP behaviours (e.g. delay tails).
 Run it after any DSP change.
+
+`tests/render-effects.mjs` (`pnpm test:render`) is the same idea against a real
+Web Audio implementation instead of the shim: it registers the committed worklet
+source via a Blob URL into an `OfflineAudioContext`, builds a node for every
+effect in the catalog, and renders. It catches what the shim cannot — module
+registration, `parameterData` coercion, channel counts, port messaging — plus
+`verify-effects.mjs` stays the fast lane for per-processor sample math.
+
+`tests/stress-engine.mjs` (`pnpm test:stress`) drives the real engine against a
+permissive Web Audio mock (`tests/mock-web-audio.mjs`) at virtual speed: control
+flow, lifetime bookkeeping and bounded caches under load.
+
+`tests/stress-real.mjs` (`pnpm test:stress:real`) drives the same engine against
+`web-audio-api` — the pure-JS Web Audio API for Node — on the real audio clock.
+It validates the browser-shaped path end to end: real `decodeAudioData`, real
+worklet registration, real analyser reads, and the recorder/encoder module
+Workers. `tests/web-audio-api-node.mjs` supplies the Node environment (Worker
+over `node:worker_threads`, `XMLHttpRequest` over `fetch`, `requestAnimationFrame`,
+and the worklet `parameterDescriptors` setter that our sources assume). It is
+wall-clock bound, so its soak is much shorter than the mock lane's. On a host
+with no audio device, run it with `AUDIO_ENGINE_SINK=none`.
+
 
 ## Consuming the package locally
 

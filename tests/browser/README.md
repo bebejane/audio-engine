@@ -18,6 +18,27 @@ The page needs `http://` (ES modules + import maps), so use the dev server — n
 `file://`. Click **Start audio** once: browsers require a user gesture before an
 `AudioContext` will run.
 
+## Stopping a run (important)
+
+A started scenario keeps ticking until it is stopped, and **every open tab is a
+separate `AudioContext`** — two live tabs contend for the same audio thread, so
+measurements taken with more than one tab open are meaningless.
+
+- **Kill** (or **Esc**) destroys the engine and clears every timer — load
+  generators, the metrics loop, recording. Idempotent; latch the page until
+  **Reset**.
+- Closing/leaving the page stops everything too (`pagehide`).
+- `?agent=1` additionally kills on tab-background, for agent-driven runs that
+  must not linger. A plain manual run survives a tab switch.
+
+Rules for automated runs:
+
+- **One tab at a time.** Re-navigate the *existing* tab; don't open a second.
+  The dev server already sends `cache-control: no-store`, so a reload is enough
+  to pick up a rebuild — there is no need for a fresh tab.
+- Append a cache-busting query only on the first open, not on every iteration.
+- Finish by killing the run, and leave at most one tab behind.
+
 ## Why a build step
 
 The package ships TypeScript source for a bundler to transpile; a bare page
@@ -57,6 +78,32 @@ package itself — it is a dev-only test harness.
   saved to `localStorage` so a tab crash doesn't lose them; **Reset** clears them.
 - **Soak 15s** — voices + automation + effects + recording all at once, then
   reports ops/sec, glitches, clips and drift.
+
+### Pitch latency probe (`?pitchprobe=1`)
+
+Opt-in (add `?pitchprobe=1` to the URL) so it never shadows the ramp test. Adds a
+**Pitch latency probe** button that plays a steady 220 Hz tone through the
+shifter at +12 semitones and reports what the shift actually costs, at the
+engine's configured block size and two reference sizes.
+
+This exists because the shifter's **latency equals its block size**, one-for-one:
+
+| `pitchBlockMs` | latency | quality (220 Hz, +12 st) |
+| --- | --- | --- |
+| 120 (library default) | 120 ms | target 0.040, spread ~0.0001 |
+| **40 (engine default)** | **40 ms** | **target 0.040, spread 0.0000** |
+| 20 | 20 ms | target **0.008** — the shift breaks up |
+
+Read the log lines as:
+
+- **DRY control** — the same sound at pitch 0. It should read `fund=0.060`,
+  `resid=0.060`, `spread=0.0000`, warble under 1%. If this is not clean, the
+  measurement is wrong, not the shifter.
+- **WET +12** — `target` is energy at the shifted octave (higher is better),
+  `resid` is unshifted leakage at the input pitch (should be ~0), `spread` is
+  non-harmonic sideband energy (smearing), `snr` is target/spread.
+- Warble is ~4–5% for every wet block size vs ~0.8% dry — that is a shifter
+  characteristic, not a block-size effect, so it does not discriminate configs.
 
 ## Notes
 

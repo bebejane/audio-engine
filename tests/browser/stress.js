@@ -38,6 +38,26 @@ function wavBuffer(seconds, sampleRate, freq) {
 	return dv.buffer;
 }
 
+/**
+ * A *steady* sine (no amplitude envelope) at 60% full scale — the pitch-quality
+ * probe needs a stationary fundamental to analyse, unlike the load-generator
+ * signal above.
+ */
+function toneBuffer(seconds, sampleRate, freq, amp = 0.6) {
+	const n = Math.floor(seconds * sampleRate);
+	const bytes = 44 + n * 2;
+	const dv = new DataView(new ArrayBuffer(bytes));
+	const str = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+	str(0, 'RIFF'); dv.setUint32(4, bytes - 8, true); str(8, 'WAVE');
+	str(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+	dv.setUint32(24, sampleRate, true); dv.setUint32(28, sampleRate * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+	str(36, 'data'); dv.setUint32(40, n * 2, true);
+	for (let i = 0; i < n; i++) {
+		dv.setInt16(44 + i * 2, Math.sin((2 * Math.PI * freq * i) / sampleRate) * amp * 32767, true);
+	}
+	return dv.buffer;
+}
+
 const rnd = (n) => Math.random() * n;
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -115,9 +135,18 @@ let clickCount = 0;
 let clickMaxDelta = 0;
 let clickRate = 0;
 let clickPrev = 0;
+// timers that outlive `running` (the lag probe, the 1 Hz UI refresh, the rAF
+// loop). Kept so killAll() can actually stop them — previously they ticked
+// forever after a stop.
+const metricsTimers = [];
+let metricsRaf = 0;
+// set when killAll() runs so nothing can restart load afterwards
+let killed = false;
+// ?agent=1 => an agent-driven run: hard-stop on background so it cannot linger
+const AGENT = new URLSearchParams(location.search).get('agent') === '1';
 
 async function startAudio() {
-	if (engine) return;
+	if (engine || killed) return;
 	engine = new AudioEngine({
 		sampleRate: 44100,
 		enableAnalysers: true,
@@ -143,6 +172,18 @@ async function startAudio() {
 			clickMaxDelta = 0;
 			clickPrev = 0;
 		},
+		/** Simulate a slider drag on `rate` at a given call frequency (ms). */
+		rateSweep: (ids, every = 8) => {
+			const list = ids && ids.length ? ids : engine.sounds.map((s) => s.id);
+			let t = 0;
+			return setInterval(() => {
+				t += every / 1000;
+				const v = 0.5 + 1.5 * (0.5 + 0.5 * Math.sin(t * 2));
+				for (const id of list) if (engine.exist(id)) engine.rate(id, v);
+			}, every);
+		},
+		/** Pitch-shift audio quality at the default vs a given block size. */
+		pitchProbe,
 	};
 
 	analyser = engine.context.createAnalyser();
@@ -172,7 +213,7 @@ async function startAudio() {
 
 	updatePill();
 	for (const id of ['start']) $(id).disabled = true;
-	for (const id of ['spawn', 'playAll', 'automate', 'effects', 'record', 'ramp', 'soak', 'reset']) $(id).disabled = false;
+	for (const id of ['spawn', 'playAll', 'automate', 'effects', 'record', 'ramp', 'soak', 'reset', 'kill']) $(id).disabled = false;
 	log('audio context running · ' + engine.context.sampleRate + ' Hz');
 	startMetrics();
 }
@@ -213,9 +254,223 @@ function stopAll() {
 	engine.master.stop?.();
 }
 
+// ---- pitch quality probe --------------------------------------------------
+// Latency of the Signalsmith Stretch node is exactly its `blockMs`, and the
+// engine currently leaves that at the default (120 ms). Smaller blocks are a
+// straight latency win, but the STFT needs enough context — this measures what
+// the trade actually costs in audio quality, live, on the real worklet.
+//
+// Method: play a steady 220 Hz tone through the shifter at +12 semitones and
+// analyse the master output.
+//   * targetDoubling — energy at 440 Hz (the shift we asked for). Should be
+//     strong if the shift is working.
+//   * residualFundamental — energy left at 220 Hz (unshifted). Should be low.
+//   * spectralSpread — energy at 340/560 Hz (non-harmonic sidebands). A clean
+//     shift puts little there; smearing from too small a block raises it.
+//   * warbling — variation of short-window RMS over the capture. A correct
+//     steady shift holds level; an artefacting one pumps.
+
+/** Single-bin DFT magnitude at `freq` over `len` samples from `from`. */
+function binMag(x, freq, from, len, sr) {
+	let re = 0, im = 0;
+	for (let i = 0; i < len; i++) {
+		const v = x[from + i] || 0;
+		const ph = (2 * Math.PI * freq * i) / sr;
+		re += v * Math.cos(ph);
+		im -= v * Math.sin(ph);
+	}
+	return Math.sqrt(re * re + im * im) / len;
+}
+
+/**
+ * Measure a steady tone's spectrum. `samples` is the raw master capture (mono).
+ *
+ * Everything is computed on a *windowed tail* of the capture: the first part is
+ * polluted by the shifter priming for its latency and the last by the capture
+ * teardown, so only the settled middle is analysed.
+ *
+ * All magnitudes are normalised so a full-scale sine reads ~1.0, which makes the
+ * numbers comparable across runs and configs.
+ */
+function analyseTone(samples, sr, fundamental = 220, semitones = 12) {
+	const target = fundamental * Math.pow(2, semitones / 12);
+	// use the settled middle: skip the first 0.5s and the last 0.25s
+	const skip = Math.floor(sr * 0.5);
+	const end = Math.max(skip, samples.length - Math.floor(sr * 0.25));
+	const len = Math.min(end - skip, 32768);
+	if (len < 4096) return { error: 'capture too short', len: samples.length };
+
+	// Hann window applied to the raw signal
+	const w = new Float32Array(len);
+	for (let i = 0; i < len; i++) {
+		const s = samples[skip + i] || 0;
+		w[i] = s * (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / len));
+	}
+	// coherent gain of a Hann window is 0.5; normalise the DFT by that so a
+	// full-scale sine gives magnitude ~1
+	const norm = 2 / len / 0.5;
+	const mag = (f) => {
+		let re = 0, im = 0;
+		for (let i = 0; i < len; i++) {
+			const ph = (2 * Math.PI * f * i) / sr;
+			re += w[i] * Math.cos(ph);
+			im -= w[i] * Math.sin(ph);
+		}
+		return (2 * Math.sqrt(re * re + im * im) * norm) / 2;
+	};
+
+	const targetDoubling = mag(target);
+	const residualFundamental = mag(fundamental);
+	// non-harmonic sidebands of both the input and target => smearing
+	const spread = (mag(340) + mag(560) + mag(660)) / 3;
+
+	// level stability, measured on short windows of the *unwindowed* tail:
+	// pumping/incomplete STFT windows show up as RMS variation
+	let minR = Infinity, maxR = 0, sumR = 0, nW = 0;
+	const win = 2048;
+	for (let s = 0; s + win <= len; s += win) {
+		let sum = 0;
+		for (let i = 0; i < win; i++) { const v = samples[skip + s + i] || 0; sum += v * v; }
+		const r = Math.sqrt(sum / win);
+		if (r < minR) minR = r;
+		if (r > maxR) maxR = r;
+		sumR += r; nW++;
+	}
+	const meanR = nW ? sumR / nW : 0;
+	const warbling = meanR > 1e-6 ? (maxR - minR) / (2 * meanR) : 0;
+
+	// signal-to-junk ratio: how far above the sideband noise the wanted shift is
+	const snr = spread > 1e-9 ? targetDoubling / spread : Infinity;
+
+	return { targetDoubling, residualFundamental, spread, warbling, snr };
+}
+
+/** Peak absolute sample in a buffer. */
+function peakOf(x) {
+	let peak = 0;
+	for (let i = 0; i < x.length; i++) { const a = Math.abs(x[i]); if (a > peak) peak = a; }
+	return peak;
+}
+
+/** Capture ~`seconds` of the master output as a Float32Array (mono sum). */
+async function captureMaster(seconds) {
+	const sr = engine.context.sampleRate;
+	const n = Math.floor(seconds * sr);
+	const proc = engine.context.createScriptProcessor(4096, 2, 2);
+	const chunks = [];
+	let got = 0;
+	proc.onaudioprocess = (e) => {
+		if (got >= n) return;
+		const l = e.inputBuffer.getChannelData(0);
+		const r = e.inputBuffer.getChannelData(1);
+		const out = new Float32Array(l.length);
+		for (let i = 0; i < out.length; i++) out[i] = (l[i] + r[i]) * 0.5;
+		chunks.push(out);
+		got += out.length;
+		// passthrough (so the graph keeps pulling) at zero to stay silent
+		e.outputBuffer.getChannelData(0).fill(0);
+		e.outputBuffer.getChannelData(1).fill(0);
+	};
+	engine.masterGain.connect(proc);
+	proc.connect(engine.context.destination);
+	await wait(seconds * 1000 + 250);
+	engine.masterGain.disconnect(proc);
+	proc.disconnect();
+	const total = chunks.reduce((a, c) => a + c.length, 0);
+	const out = new Float32Array(total);
+	let o = 0;
+	for (const c of chunks) { out.set(c, o); o += c.length; }
+	return out;
+}
+
+/**
+ * Probe one block size. Reuses a single long-lived sound so the async shifter
+ * build isn't restarted per trial, and waits for `_pitchNode` to actually exist
+ * rather than guessing with a fixed sleep.
+ *
+ * @param blockMs - `null` for the engine default, else a block size in ms
+ */
+async function pitchProbe(blockMs) {
+	// one reusable sound, so the lazy shifter is built once across all trials
+	const id = 'probe';
+	if (!engine.exist(id)) {
+		engine.add(id, null, 'probe-tone.wav');
+		engine.soundMap[id].sound.decodeAudioData(toneBuffer(4, 44100, 220));
+		await waitFor(() => engine.ready() > 0);
+	}
+	const snd = engine.soundMap[id].sound;
+
+	const diag = {
+		hasScriptProcessor: typeof engine.context.createScriptProcessor === 'function',
+		loaded: !!snd._loaded,
+		duration: typeof snd.duration === 'function' ? snd.duration() : null,
+	};
+	if (!diag.hasScriptProcessor) return { error: 'createScriptProcessor unavailable', diag };
+	if (!diag.loaded) return { error: 'tone buffer did not decode', diag };
+
+	// start playing (dry), then engage pitch and WAIT for the node to exist
+	engine.loop(id, true);
+	engine.play(id);
+	engine.pitch(id, 12);
+
+	const built = await waitFor(() => !!snd._pitchNode || snd._pitchNodeFailed, 4000);
+	diag.pitchNodeBuilt = built;
+	diag._pitchNodeFailed = snd._pitchNodeFailed;
+	diag.pitchNode = !!snd._pitchNode;
+	diag.pitchLatency = snd._pitchLatency;
+	diag.pitchEngaged = snd._pitchEngaged;
+	if (!built) return { error: 'shifter node never built', diag };
+
+	// reconfigure the block size on the live node (public API: configure())
+	const node = snd._stretch;
+	diag.canConfigure = !!(node && node.configure);
+	if (blockMs && node && node.configure) {
+		try {
+			await node.configure({ blockMs });
+			diag.configured = blockMs;
+			diag.latencyAfter = await node.latency();
+		} catch (e) {
+			diag.configError = String(e);
+		}
+	} else if (node && node.latency) {
+		diag.latencyAfter = await node.latency();
+	}
+
+	// let the shifter prime for its latency, then settle
+	await wait((diag.latencyAfter ? diag.latencyAfter * 1000 : 700) + 400);
+
+	// DRY control: same sound, pitch flat, so the analysis can be validated
+	// against a known-clean signal before trusting the shifted numbers
+	engine.pitch(id, 0);
+	await wait(300);
+	const dry = await captureMaster(1.5);
+	diag.dryPeak = peakOf(dry);
+
+	// WET: the shift under test
+	engine.pitch(id, 12);
+	await wait(400);
+	const samples = await captureMaster(1.5);
+	diag.samples = samples.length;
+	diag.capturedPeak = peakOf(samples);
+
+	// leave it stopped but keep the sound (and its shifter) for the next trial
+	engine.stop(id);
+	engine.pitch(id, 0);
+
+	const result = analyseTone(samples, engine.context.sampleRate, 220, 12);
+	result.dry = analyseTone(dry, engine.context.sampleRate, 220, 0);
+	result.diag = diag;
+	return result;
+}
+
+/** Remove the probe sound once all trials are done. */
+function pitchProbeCleanup() {
+	if (engine.exist('probe')) engine.remove('probe');
+}
+
 // ---- load generators ------------------------------------------------------
 function startAutomation() {
-	if (timers.has('automate')) return;
+	if (killed || timers.has('automate')) return;
 	$('automate').classList.add('on');
 	const tick = () => {
 		if (!engine.sounds.length) return;
@@ -237,7 +492,7 @@ function startAutomation() {
 }
 
 function startEffects() {
-	if (timers.has('effects')) return;
+	if (killed || timers.has('effects')) return;
 	$('effects').classList.add('on');
 	const tick = async () => {
 		if (!engine.sounds.length) return;
@@ -309,6 +564,45 @@ function stopAllLoad() {
 	escalating = false;
 }
 
+/**
+ * Full stop: kill every load generator, stop playback, tear the engine down and
+ * halt the metrics loop. Idempotent, and latches `killed` so nothing can restart
+ * load afterwards. Bound to the Kill button, `pagehide`, auto-background (agent
+ * runs only) and Escape — so an abandoned tab cannot keep an audio context
+ * running.
+ */
+function killAll() {
+	killed = true;
+	stopAllLoad();
+	try { stopAll(); } catch { /* engine already gone */ }
+	if (engine) {
+		try { engine.destroy(true); } catch { /* ignore */ }
+	}
+	stopMetrics();
+	updatePill();
+	$('kill').disabled = true;
+	for (const id of ['spawn', 'playAll', 'automate', 'effects', 'record', 'ramp', 'soak', 'stopAll'])
+		$(id).disabled = true;
+	log('KILLED — engine destroyed, all timers cleared');
+}
+
+/**
+ * Auto-stop hooks. `?agent=1` opts into killing on background — an agent-driven
+ * run must not linger, but a manual run should survive a tab switch (reading the
+ * docs mid-soak would otherwise come back to a dead page).
+ */
+function installAutoKill() {
+	window.addEventListener('pagehide', () => { stopAllLoad(); stopMetrics(); });
+	if (AGENT) {
+		document.addEventListener('visibilitychange', () => {
+			if (document.hidden) killAll();
+		});
+	}
+	window.addEventListener('keydown', (e) => {
+		if (e.key === 'Escape') killAll();
+	});
+}
+
 // ---- metrics --------------------------------------------------------------
 const met = {
 	frames: 0, fpsT0: performance.now(), fps: 0, fpsCount: 0,
@@ -324,11 +618,11 @@ function startMetrics() {
 	met.lastPerf = met.lastFrame;
 
 	// event-loop lag probe
-	setInterval(() => {
+	metricsTimers.push(setInterval(() => {
 		const now = performance.now();
 		met.lag = now - met.lagExpected;
 		met.lagExpected = now + 50;
-	}, 50);
+	}, 50));
 	met.lagExpected = performance.now() + 50;
 
 	const frame = () => {
@@ -342,17 +636,28 @@ function startMetrics() {
 		if (dt > 50) met.long++;
 		met.frames++;
 		if (met.frames % 10 === 0) readAudio();
-		requestAnimationFrame(frame);
+		metricsRaf = requestAnimationFrame(frame);
 	};
-	requestAnimationFrame(frame);
+	metricsRaf = requestAnimationFrame(frame);
 
 	// 1 Hz UI refresh
-	setInterval(() => {
+	metricsTimers.push(setInterval(() => {
 		const now = performance.now();
 		met.fps = (met.frames * 1000) / (now - met.fpsT0);
 		met.frames = 0; met.fpsT0 = now;
 		updateUI();
-	}, 1000);
+	}, 1000));
+}
+
+/** Stop the metrics loop and clear its timers (idempotent). */
+function stopMetrics() {
+	running = false;
+	if (metricsRaf) {
+		cancelAnimationFrame(metricsRaf);
+		metricsRaf = 0;
+	}
+	for (const t of metricsTimers) clearInterval(t);
+	metricsTimers.length = 0;
 }
 
 function readAudio() {
@@ -453,7 +758,14 @@ async function rampTest() {
 	$('rampNote').textContent = 'ramping: +16 voices every 2s';
 	log('ramp test started');
 	const MAX = Number($('voices').max) || 512;
+	// hard deadline: never let a ramp run forever (each step is 2s, +16 voices)
+	const deadline = performance.now() + 120000;
 	for (let target = 16; target <= MAX && escalating; target += 16) {
+		if (performance.now() > deadline) {
+			$('rampNote').textContent = 'ramp stopped at deadline (120s)';
+			log('ramp stopped: 120s deadline');
+			break;
+		}
 		await ensureVoices(target);
 		playAll();
 		await wait(2000);
@@ -473,7 +785,9 @@ async function rampTest() {
 
 // ---- soak -----------------------------------------------------------------
 async function soak(seconds = 15) {
-	if (!engine) return;
+	if (!engine || killed) return;
+	// hard cap: a soak can never outlive its window
+	seconds = Math.min(seconds, 120);
 	log(`soak started (${seconds}s): voices + automation + effects + recording`);
 	await ensureVoices(Math.max(32, Math.min(128, Number($('voices').value) || 32)));
 	playAll();
@@ -505,13 +819,59 @@ $('spawn').onclick = async () => {
 };
 $('playAll').onclick = () => playAll();
 $('stopAll').onclick = () => { stopAllLoad(); stopAll(); log('stopped'); };
+$('kill').onclick = () => killAll();
 $('automate').onclick = () => (timers.has('automate') ? stopAutomation() : startAutomation());
 $('effects').onclick = () => (timers.has('effects') ? stopEffects() : startEffects());
 $('clickThresh').oninput = applyClickThreshold;
 $('record').onclick = () => toggleRecord();
 $('ramp').onclick = () => rampTest().catch((e) => log('ramp failed: ' + e));
 $('soak').onclick = () => soak().catch((e) => log('soak failed: ' + e));
+// Pitch-quality probe: opt-in via ?pitchprobe=1 so it never shadows the real
+// ramp test. Measures shift quality/latency at a few block sizes on the live
+// worklet — see pitchProbe().
+if (new URLSearchParams(location.search).get('pitchprobe') === '1') {
+	const btn = document.createElement('button');
+	btn.textContent = 'Pitch latency probe';
+	btn.id = 'pitchProbe';
+	btn.disabled = true;
+	btn.onclick = async () => { await runPitchProbeChain(); };
+	$('ramp').after(btn);
+	// enable it alongside the other controls
+	const origStart = $('start').onclick;
+	$('start').onclick = (e) => {
+		const r = origStart(e);
+		setTimeout(() => (btn.disabled = !engine), 300);
+		return r;
+	};
+}
+
+/** Run the probe across the engine default and two reference block sizes. */
+async function runPitchProbeChain() {
+	if (!engine) return;
+	const show = (label, r) => {
+		if (r.error) { log(`${label}: ERROR ${r.error} · ${JSON.stringify(r.diag)}`); return; }
+		log(
+			`${label}: WET +12 target=${r.targetDoubling.toFixed(3)} resid=${r.residualFundamental.toFixed(3)} ` +
+				`spread=${r.spread.toFixed(4)} snr=${r.snr === Infinity ? 'inf' : r.snr.toFixed(1)} ` +
+				`warble=${(r.warbling * 100).toFixed(1)}%`,
+		);
+		if (r.dry) {
+			log(
+				`   DRY control: fund=${r.dry.targetDoubling.toFixed(3)} ` +
+					`resid=${r.dry.residualFundamental.toFixed(3)} spread=${r.dry.spread.toFixed(4)} ` +
+					`warble=${(r.dry.warbling * 100).toFixed(1)}%`,
+			);
+		}
+		log(`   diag ${JSON.stringify(r.diag)}`);
+	};
+	show('engine default', await pitchProbe(null));
+	for (const b of [80, 20]) show(`blockMs=${b}`, await pitchProbe(b));
+	pitchProbeCleanup();
+	log('pitch probe done');
+}
+
 $('reset').onclick = () => {
+	if (killed) killed = false; // reset re-arms a killed page
 	stopAllLoad();
 	stopAll();
 	if (engine) engine.removeAll();
@@ -526,5 +886,10 @@ $('reset').onclick = () => {
 
 window.addEventListener('error', (e) => log('window error: ' + e.message));
 window.addEventListener('unhandledrejection', (e) => log('unhandled rejection: ' + (e.reason?.message || e.reason)));
+installAutoKill();
 restoreRamp();
 log('ready — click “Start audio” (browsers require a user gesture)');
+if (AGENT) {
+	document.title = 'agent · ' + document.title;
+	log('agent mode: will kill on background (Kill button or Esc to stop now)');
+}

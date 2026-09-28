@@ -20,8 +20,10 @@ Public entry point: [`src/index.ts`](./src/index.ts).
 pnpm install
 pnpm typecheck      # tsc --noEmit
 pnpm test           # pretest regenerates the worklet, then runs the DSP harness
+pnpm test:render    # render all 20 effects through real web-audio-api offline
 pnpm test:stress    # engine soak test (real AudioEngine on a mock Web Audio API)
 pnpm test:stress:heavy  # same, wider grid + longer soak
+pnpm test:stress:real   # engine soak on real web-audio-api (wall clock)
 pnpm stress:browser # build + serve the in-browser stress page (:8123)
 pnpm worklet:gen    # regenerate src/effects/workletsource.generated.ts
 pnpm worklet:check  # fail if the generated worklet source is stale
@@ -54,8 +56,11 @@ src/
   pitch/           Signalsmith Stretch loader + vendored .mjs
 scripts/build-effects-worklet.mjs   assembles the worklet module
 tests/verify-effects.mjs            offline DSP harness
+tests/render-effects.mjs            all effects rendered via real web-audio-api
 tests/stress-engine.mjs             engine stress/soak test (uses the trio below)
+tests/stress-real.mjs               engine stress/soak on real web-audio-api
 tests/mock-web-audio.mjs            headless Web Audio mock for the stress test
+tests/web-audio-api-node.mjs        Node environment for the real-engine lane
 tests/ts-hook.mjs, register-ts.mjs  TS loader hook so Node can import src/*.ts
 tests/browser/                      in-browser stress page + tiny TS→browser build
 typedoc.json / docs/                documentation
@@ -133,9 +138,11 @@ To add an effect: add `source.js` + `index.ts`, register it in both `EFFECTS` an
 
 1. `pnpm typecheck` passes.
 2. If you touched DSP: `pnpm worklet:gen` and `pnpm test` pass, and the generated
-   file is committed/updated.
+   file is committed/updated. `pnpm test:render` also covers worklet registration
+   and channel wiring through a real Web Audio implementation.
 3. If you touched engine internals (grid, transport, effects lifecycle, analysers,
-   model/presets): `pnpm test:stress` passes.
+   model/presets): `pnpm test:stress` passes; `pnpm test:stress:real` is the
+   slower, real-clock counterpart (`AUDIO_ENGINE_SINK=none` on a headless host).
 4. If you changed the public surface: `src/types.ts` updated and `pnpm docs:api`
    regenerated (or at least the JSDoc added).
 5. `docs/` guides updated if behavior/formats changed.
