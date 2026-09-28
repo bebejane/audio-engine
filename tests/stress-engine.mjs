@@ -37,8 +37,7 @@ const EFFECT_TYPES = [
 	'lowpassfilter',
 	'magnetictape',
 	'j60chorus',
-	'korg35hpf',
-	'korg35lpf',
+	'korg35filter',
 	'tapedelay',
 	'tapesaturation',
 ];
@@ -167,7 +166,54 @@ await phase('parameter storm', async () => {
 	check('parameter storm survived', true);
 });
 
-// 3b. channel EQ churn -----------------------------------------------------
+// 3b. pitch shifter topology ----------------------------------------------
+// Regression: flattening pitch (returning to 0) used to remove the latency-
+// carrying Signalsmith Stretch node from the graph, which jumped the signal and
+// clicked. It must now stay engaged (glided to 0 semitones) for the rest of the
+// playback, and only a fresh play() decides the topology.
+await phase('pitch flatten keeps shifter engaged', async () => {
+	const sound = engine.soundMap['c0'].sound;
+	sound.play();
+
+	let disconnects = 0;
+	sound._pitchNode = { connect() {}, disconnect() { disconnects++; } };
+	sound._stretch = { schedule() {}, start() {} };
+	sound._pitchActive = true;
+	sound._pitchEngaged = true;
+	sound._connectChain();
+	disconnects = 0; // ignore the teardown/reconnect from the manual rebuild
+
+	sound.pitch(0);
+	check('flattening keeps the shifter engaged', sound._pitchEngaged === true, `engaged=${sound._pitchEngaged}`);
+	check('flattening does not disconnect the shifter', disconnects === 0, `disconnects=${disconnects}`);
+
+	sound.pitch(12);
+	check('re-raising stays engaged without rewiring', sound._pitchEngaged === true && disconnects === 0, `disconnects=${disconnects}`);
+
+	sound.pitch(0);
+	sound.play();
+	// play() skips the rebuild while muted/soloed, so force it to observe the
+	// topology decision deterministically
+	sound._connectChain();
+	check('playback at flat starts dry', sound._pitchEngaged === false, `engaged=${sound._pitchEngaged}`);
+	check('playback at flat drops the shifter', disconnects > 0, `disconnects=${disconnects}`);
+
+	// The channel processor places the loop fade from `_chainDelay`, so it has to
+	// follow the topology rather than the mere existence of the shifter node:
+	// a remembered latency left applied while the shifter is out of the path puts
+	// every fade one latency early (audible as a click at each wrap).
+	sound._pitchLatency = 0.12;
+	sound._pitchActive = true;
+	sound.play();
+	check('pitched playback adopts the shifter delay', sound._chainDelay === 0.12, `delay=${sound._chainDelay}`);
+
+	sound._pitchActive = false;
+	sound.play();
+	check('flat playback clears the shifter delay', sound._chainDelay === 0, `delay=${sound._chainDelay}`);
+	check('the measurement is still remembered', sound._pitchLatency === 0.12, `latency=${sound._pitchLatency}`);
+});
+
+// 3c. channel EQ churn -----------------------------------------------------
 await phase('eq churn', async () => {
 	const rnd = mulberry(0x1234abcd);
 	for (let pass = 0; pass < 60; pass++) {

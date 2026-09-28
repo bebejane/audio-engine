@@ -30,7 +30,7 @@ by `pnpm worklet:gen`. **After editing any `source.js`, run `pnpm worklet:gen`**
 - `pnpm install`
 - `pnpm typecheck` — `tsc --noEmit`
 - `pnpm worklet:gen` / `pnpm worklet:check`
-- `pnpm test` — offline DSP harness (all 21 effect processors)
+- `pnpm test` — offline DSP harness (all 20 effect processors)
 - `pnpm docs:api` — generate the TypeDoc API reference into `docs/api/`
 
 ## Documentation

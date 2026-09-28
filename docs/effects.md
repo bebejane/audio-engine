@@ -124,19 +124,18 @@ and post to the worklet. The dry path stays live until the impulse arrives.
 | `chorusII` | `true` | Chorus II button — 0.863 Hz triangle, deeper. |
 | `mix` | `1` | `1` = hardware blend (0.83·dry + BBD wet), `0` = dry. |
 
-### Korg 35 HPF — `korg35hpf`
+### Korg 35 Filter — `korg35filter`
 
-| Param | Default | Range |
-| --- | --- | --- |
-| `cutoff` | `350` | `20 … 20000` Hz |
-| `q` | `1` | `0.5 … 10` |
+Virtual-analog MS-10 / early MS-20 24 dB filter (a 1:1 port of the Faust
+`korg35lpf` / `korg35hpf` models from
+[faustfilters](https://github.com/SpotlightKid/faustfilters), STK-4.3). One
+processor covers both models — the `highpass` switch selects which runs.
 
-### Korg 35 LPF — `korg35lpf`
-
-| Param | Default | Range |
-| --- | --- | --- |
-| `cutoff` | `350` | `20 … 20000` Hz |
-| `q` | `1` | `0.5 … 10` |
+| Param | Default | Range | Notes |
+| --- | --- | --- | --- |
+| `cutoff` | `350` | `20 … 20000` Hz | |
+| `q` | `1` | `0.5 … 10` | Resonance; `0.707` is flat. |
+| `highpass` | `false` | `false` / `true` | `false` = 24 dB low pass, `true` = 24 dB high pass. |
 
 ### Lowpass Filter — `lowpassfilter`
 

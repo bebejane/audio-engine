@@ -11,7 +11,7 @@ const EFFECT_TYPES = [
 	'delay', 'dubdelay', 'flanger', 'reverb', 'distortion', 'compressor',
 	'pingpongdelay', 'tremolo', 'quadrafuzz', 'stereopanner', 'stonephaser',
 	'ringmodulator', 'highpassfilter', 'lowpassfilter', 'magnetictape', 'j60chorus',
-	'korg35hpf', 'korg35lpf', 'tapedelay', 'tapesaturation',
+	'korg35filter', 'tapedelay', 'tapesaturation',
 ];
 
 const log = (msg) => {

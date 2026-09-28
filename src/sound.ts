@@ -23,6 +23,12 @@ interface StretchLike {
 	start?: () => void;
 	schedule?: (opt: { semitones: number; active: boolean }) => unknown;
 	disconnect?: () => void;
+	/**
+	 * Signal delay through the shifter, in seconds (asynchronous — the value
+	 * only arrives after the worklet replies, so it can't be used in time
+	 * arithmetic; it is read once to keep the loop fade aligned).
+	 */
+	latency?: () => Promise<number>;
 }
 
 /** Sound settings defaults, mirrored as `_<key>` fields on the instance. */
@@ -197,8 +203,22 @@ class Sound extends EventEmitter {
 	_pitchNode: AudioWorkletNode | null;
 	_pitchNodeFailed: boolean;
 	_pitchActive: boolean;
+	/** True while the Stretch node should stay in the graph for this playback. */
+	_pitchEngaged: boolean;
 	_stretch: StretchLike | null;
 	_pitchPending: boolean;
+	/**
+	 * Round-trip latency (seconds) of whatever sits between the source and the
+	 * channel processor — the pitch shifter, 0 when it is out of the path. Sent
+	 * to the processor so it can place the loop fade on the audible wrap.
+	 */
+	_chainDelay: number;
+	/**
+	 * The shifter's measured latency, remembered across the times it is out of
+	 * the path (it is only measured once, when the node is built). `_chainDelay`
+	 * is this value while the shifter is engaged and 0 while it is not.
+	 */
+	_pitchLatency: number;
 	_loopFadeDur: number;
 	_channelNode: AudioWorkletNode | null;
 	_channelNodePending: boolean;
@@ -294,6 +314,10 @@ class Sound extends EventEmitter {
 		// createPanner takes no options; 'equalpower' is already the default
 		this.panner = this.context.createPanner();
 		this._loopFadeDur = 0.006;
+		// no pitch shifter in the path yet, so nothing delays the signal
+		this._chainDelay = 0;
+		// measured once the shifter node exists (see _ensurePitchNode)
+		this._pitchLatency = 0;
 		// Per-sound channel processor (loop clock + anti-click fade + elapsed)
 		// lives on the audio thread (see src/effects/worklet/channel.js). The
 		// node is created lazily on the first loop/elapsed play and kept for the
@@ -311,11 +335,16 @@ class Sound extends EventEmitter {
 		this.effectsOutputNode = this.context.createGain();
 		this.chain = [];
 		// tempo-preserving pitch shifter (Signalsmith Stretch) inserted between
-		// the source and the effects; created lazily and bypassed at 0
-		// semitones so it costs nothing when unused
+		// the source and the effects; created lazily, and kept out of the path
+		// until the pitch first leaves 0 (see `pitch()`)
 		this._pitchNode = null;
 		this._pitchNodeFailed = false;
 		this._pitchActive = Math.abs(this._pitch || 0) > 0.01;
+		// whether the shifter is currently wired into the path. It is decoupled
+		// from `_pitchActive`: once engaged it stays in the graph (glided to 0
+		// semitones) until the next play(), because removing the latency-carrying
+		// Stretch node mid-playback jumps the signal and clicks.
+		this._pitchEngaged = this._pitchActive;
 		this._stretch = null;
 		this._pitchPending = false;
 		// NB: the Signalsmith node is NOT created here even when the engine
@@ -360,6 +389,14 @@ class Sound extends EventEmitter {
 
 		this.source = this.context.createBufferSource();
 		this.source.buffer = this.buffer;
+
+		// each fresh playback decides the shifter topology from the current
+		// pitch: flat starts dry/zero-latency even if a Stretch node exists
+		this._pitchEngaged = this._pitchActive;
+		// ...and the chain delay follows the topology, not just the node. The
+		// shifter can be out of the path while its latency is still remembered,
+		// and a stale value here would place every loop fade one latency early.
+		this._chainDelay = this._pitchEngaged ? this._pitchLatency : 0;
 
 		if (!this._muted && (soloOn ? this._solo : true)) this._connectChain();
 
@@ -409,8 +446,8 @@ class Sound extends EventEmitter {
 		type ChainNode = { connect(node: AudioNode): unknown };
 		let lastOutput: ChainNode = this.source as unknown as ChainNode;
 		// pitch shifter first so the effects process the transposed signal
-		if (this._pitchActive && !this._pitchNode) this._ensurePitchNode();
-		if (this._pitchActive && this._pitchNode) {
+		if (this._pitchEngaged && !this._pitchNode) this._ensurePitchNode();
+		if (this._pitchEngaged && this._pitchNode) {
 			lastOutput.connect(this._pitchNode);
 			lastOutput = this._pitchNode;
 		}
@@ -740,6 +777,7 @@ class Sound extends EventEmitter {
 			loopEnd: this._loopEnd,
 			rate: this._rate,
 			fadeDur: this._loopFadeDur,
+			delay: this._chainDelay,
 			elapsed: this._emitElapsed,
 			elapsedPeriod: 0.03,
 		});
@@ -1150,21 +1188,35 @@ class Sound extends EventEmitter {
 	 * Tempo-preserving pitch shift, in semitones (0 = original, ±24 = ±2
 	 * octaves). Runs the source through the Signalsmith Stretch worklet
 	 * inserted between the source and the effects, so duration, loop points
-	 * and rate are untouched. The node is only connected while pitch ≠ 0 — it is
-	 * created on demand, or eagerly at construction when the engine's
-	 * `preloadPitch` option is set.
+	 * and rate are untouched. The node is created on demand, or eagerly at
+	 * construction when the engine's `preloadPitch` option is set.
+	 *
+	 * The node is wired in when the pitch first leaves 0 and then stays in the
+	 * path for the rest of the playback — returning to 0 glides the shifter to
+	 * unity rather than removing it. Removing a latency-carrying Stretch node
+	 * mid-playback jumps the signal by its latency and clicks; keeping it in
+	 * makes flattening silent (at the cost of the shifter's latency until the
+	 * next play, which starts dry again).
 	 */
 	pitch(semitones?: number): number {
 		if (semitones !== undefined) {
 			const next = Math.max(-24, Math.min(24, Number(semitones)));
-			const wasActive = this._pitchActive;
+			const wasEngaged = this._pitchEngaged;
 			this._pitch = isNaN(next) ? 0 : next;
 			this._pitchActive = Math.abs(this._pitch) > 0.01;
 
-			if (this._pitchActive) this._ensurePitchNode();
+			if (this._pitchActive) {
+				this._pitchEngaged = true;
+				if (!this._pitchNode) this._ensurePitchNode();
+				else if (this.source && !wasEngaged) {
+					// engaging mid-playback puts the shifter's delay into the
+					// path immediately; adopt it so the loop fade stays aligned
+					this._chainDelay = this._pitchLatency;
+					this._connectChain();
+				}
+			}
+			// flattening does NOT disconnect the node — see the method doc
 			this._applyPitch();
-			// (re)plug the chain only when the shifter enters/leaves the path
-			if (this.source && wasActive !== this._pitchActive) this._connectChain();
 		}
 		this._emit('pitch', this._pitch);
 		return this._pitch;
@@ -1213,7 +1265,25 @@ class Sound extends EventEmitter {
 				this._pitchPending = false;
 				if (stretch.start) stretch.start();
 				this._scheduleStretch();
-				if (this.source && this._pitchActive) this._connectChain();
+				if (this.source && this._pitchEngaged) this._connectChain();
+				// Read the shifter's delay once so the channel processor can put
+				// the loop fade on the *audible* wrap. `latency()` is a remote
+				// call (async), and the anchor has usually already gone out by
+				// now, so re-anchor when it lands.
+				if (stretch.latency) {
+					stretch
+						.latency()
+						.then((seconds: number) => {
+							const next = typeof seconds === 'number' && seconds > 0 ? seconds : 0;
+							this._pitchLatency = next;
+							// only in force while the shifter is actually engaged
+							const applied = this._pitchEngaged ? next : 0;
+							if (applied === this._chainDelay) return;
+							this._chainDelay = applied;
+							this._anchorChannel();
+						})
+						.catch(() => {});
+				}
 			})
 			.catch((err) => {
 				console.error('signalsmith-stretch unavailable', err);

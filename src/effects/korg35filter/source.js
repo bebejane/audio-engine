@@ -1,6 +1,6 @@
-// ---------------------------------------------------- Korg 35 filters --
+// -------------------------------------------------------- Korg 35 filter --
 //
-// Virtual-analog Korg 35 24 dB low-pass / high-pass filters (MS-10 and early
+// Virtual-analog Korg 35 24 dB low-pass / high-pass filter (MS-10 and early
 // MS-20), ported from the Faust sources of the faustfilters project:
 // <https://github.com/SpotlightKid/faustfilters> — faust/korg35lpf.dsp and
 // faust/korg35hpf.dsp (Faust by Eric Tarr / Christopher Arndt, MIT-style
@@ -12,9 +12,10 @@
 //     pole, Faust si.smoo) while Q feeds the resonance gain K directly
 //   * Q = 0.707 gives K = 0 (no resonance); the range is 0.5 .. 10
 //
-// mode: 'lpf' (low pass) or 'hpf' (high pass)
-function korg35State(mode) {
-	var isHpf = mode === 'hpf' ? 1 : 0;
+// One processor covers both models: `isHpf` (from the `highpass` param) picks
+// the branch per sample, so a single instance switches low pass <-> high pass
+// at runtime. isHpf: 0 = low pass, 1 = high pass.
+function korg35State() {
 	var srClamped = Math.min(192000, Math.max(1, sampleRate));
 	var kCut = 44.1 / srClamped;      // cutoff smoother pole (Faust fConst1)
 	var kTan = Math.PI / srClamped;   // tan() step (Faust fConst3)
@@ -24,7 +25,7 @@ function korg35State(mode) {
 	var s2 = 0;
 	var s3 = 0;
 	// one output sample; advances the state
-	return function (x, cutoff, q) {
+	return function (x, cutoff, q, isHpf) {
 		if (!(cutoff < maxCutoff)) cutoff = maxCutoff;
 		cs = kCut * cutoff + (1 - kCut) * cs;
 		var g = Math.tan(kTan * cs);
@@ -53,25 +54,26 @@ function korg35State(mode) {
 	};
 }
 
-// Both filters run the (mono) Faust recursion once per channel.
-function korg35Processor(mode) {
-	return class extends AudioWorkletProcessor {
-		constructor() {
-			super();
-			this.fL = korg35State(mode);
-			this.fR = korg35State(mode);
+// The (mono) Faust recursion runs once per channel; `highpass` selects the mode.
+class Korg35FilterProcessor extends AudioWorkletProcessor {
+	constructor() {
+		super();
+		this.fL = korg35State();
+		this.fR = korg35State();
+	}
+	process(inputs, outputs, parameters) {
+		var s = setupStereo(inputs, outputs);
+		if (!s) return true;
+		var q = paramAt(parameters.q, 0);
+		var isHpf = paramAt(parameters.highpass, 0) >= 0.5 ? 1 : 0;
+		var i;
+		for (i = 0; i < s.n; i++) {
+			var co = paramAt(parameters.cutoff, i);
+			s.outL[i] = this.fL(s.inL[i], co, q, isHpf);
+			if (s.outR) s.outR[i] = this.fR(s.inR[i], co, q, isHpf);
 		}
-		process(inputs, outputs, parameters) {
-			var s = setupStereo(inputs, outputs);
-			if (!s) return true;
-			var q = paramAt(parameters.q, 0);
-			var i;
-			for (i = 0; i < s.n; i++) {
-				var co = paramAt(parameters.cutoff, i);
-				s.outL[i] = this.fL(s.inL[i], co, q);
-				if (s.outR) s.outR[i] = this.fR(s.inR[i], co, q);
-			}
-			return true;
-		}
-	};
+		return true;
+	}
 }
+Korg35FilterProcessor.parameterDescriptors = desc([['cutoff', 20000, 20, 20000], ['q', 1, 0.5, 10], ['highpass', 0, 0, 1]]);
+registerProcessor('korg35filter', Korg35FilterProcessor);

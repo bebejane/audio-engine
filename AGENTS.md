@@ -95,7 +95,7 @@ typedoc.json / docs/                documentation
    Do not "fix" it.
 
 7. **`pnpm test` behavior covers DSP, not UI.** It loads the generated worklet
-   source into a shim and runs all 21 processors offline. Run it after any DSP or
+   source into a shim and runs all 20 processors offline. Run it after any DSP or
    effect change. Comments/typing-only edits do not require it, but `pnpm
 typecheck` should always pass.
 

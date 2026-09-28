@@ -170,14 +170,15 @@ console.log('\nlowpassfilter');
 	check('4.4k attenuated at 100Hz cutoff', hiPeak < 0.15, `peak=${hiPeak.toFixed(4)}`);
 }
 
-// -- korg35lpf / korg35hpf -------------------------------------------
-// Ported from faustfilters (SpotlightKid) — see korg35filters.ts. Checks the
-// two defining traits of the Korg 35 models: low-pass/high-pass shaping plus
-// the resonance peak that makes these filters musical.
-console.log('\nkorg35 filters');
+// -- korg35filter -------------------------------------------------------
+// Ported from faustfilters (SpotlightKid) — see korg35filter/source.js. Checks
+// the two defining traits of the Korg 35 models: low-pass/high-pass shaping
+// (selected by the `highpass` switch) plus the resonance peak that makes these
+// filters musical.
+console.log('\nkorg35filter');
 {
-	const runTone = (name, params, freq, blocks = 16) => {
-		const d = makeProc(name, params);
+	const runTone = (params, freq, blocks = 16) => {
+		const d = makeProc('korg35filter', params);
 		const n = blocks * BLOCK;
 		const s = sine(freq, 0.5, n);
 		const L = new Float32Array(n);
@@ -190,9 +191,9 @@ console.log('\nkorg35 filters');
 	// settled-region peak (skip the first 8 blocks of transients/smoothing)
 	const peak = (sig) => maxIdx(sig.subarray(BLOCK * 8)).m;
 
-	// low pass
+	// low pass (highpass: 0)
 	{
-		const d = makeProc('korg35lpf', { cutoff: 1000, q: 1 });
+		const d = makeProc('korg35filter', { cutoff: 1000, q: 1, highpass: 0 });
 		const dc = new Float32Array(BLOCK).fill(1);
 		const out = [];
 		for (let b = 0; b < 20; b++) {
@@ -202,20 +203,20 @@ console.log('\nkorg35 filters');
 		const g = out.slice(BLOCK * 12).reduce((a, v) => a + v, 0) / (8 * BLOCK);
 		check('LPF DC passes (unity)', Math.abs(g - 1) < 0.05, `dcg=${g.toFixed(3)}`);
 
-		const pass = peak(runTone('korg35lpf', { cutoff: 1500, q: 0.707 }, 220));
+		const pass = peak(runTone({ cutoff: 1500, q: 0.707, highpass: 0 }, 220));
 		check('LPF passband preserved', pass > 0.25, `peak=${pass.toFixed(3)}`);
-		const stop = peak(runTone('korg35lpf', { cutoff: 150, q: 0.707 }, 4400));
+		const stop = peak(runTone({ cutoff: 150, q: 0.707, highpass: 0 }, 4400));
 		check('LPF stopband attenuated', stop < 0.05, `peak=${stop.toFixed(4)}`);
 
-		const flat = peak(runTone('korg35lpf', { cutoff: 1000, q: 0.707 }, 1000));
-		const res = peak(runTone('korg35lpf', { cutoff: 1000, q: 5 }, 1000));
+		const flat = peak(runTone({ cutoff: 1000, q: 0.707, highpass: 0 }, 1000));
+		const res = peak(runTone({ cutoff: 1000, q: 5, highpass: 0 }, 1000));
 		check('LPF Q raises the cutoff peak', res > flat * 1.6, `flat=${flat.toFixed(3)} res=${res.toFixed(3)}`);
 		check('LPF finite', Number.isFinite(res));
 	}
 
-	// high pass
+	// high pass (highpass: 1)
 	{
-		const d = makeProc('korg35hpf', { cutoff: 500, q: 1 });
+		const d = makeProc('korg35filter', { cutoff: 500, q: 1, highpass: 1 });
 		const dc = new Float32Array(BLOCK).fill(1);
 		const out = [];
 		for (let b = 0; b < 24; b++) {
@@ -225,13 +226,13 @@ console.log('\nkorg35 filters');
 		const tail = maxIdx(Float32Array.from(out.slice(BLOCK * 16))).m;
 		check('HPF blocks DC', tail < 0.02, `tail=${tail.toFixed(4)}`);
 
-		const pass = peak(runTone('korg35hpf', { cutoff: 150, q: 0.707 }, 4400));
+		const pass = peak(runTone({ cutoff: 150, q: 0.707, highpass: 1 }, 4400));
 		check('HPF passband preserved', pass > 0.25, `peak=${pass.toFixed(3)}`);
-		const stop = peak(runTone('korg35hpf', { cutoff: 3000, q: 0.707 }, 100));
+		const stop = peak(runTone({ cutoff: 3000, q: 0.707, highpass: 1 }, 100));
 		check('HPF stopband attenuated', stop < 0.05, `peak=${stop.toFixed(4)}`);
 
-		const flat = peak(runTone('korg35hpf', { cutoff: 1000, q: 0.707 }, 1000));
-		const res = peak(runTone('korg35hpf', { cutoff: 1000, q: 5 }, 1000));
+		const flat = peak(runTone({ cutoff: 1000, q: 0.707, highpass: 1 }, 1000));
+		const res = peak(runTone({ cutoff: 1000, q: 5, highpass: 1 }, 1000));
 		check('HPF Q raises the cutoff peak', res > flat * 1.6, `flat=${flat.toFixed(3)} res=${res.toFixed(3)}`);
 		check('HPF finite', Number.isFinite(res));
 	}
@@ -1067,6 +1068,7 @@ console.log('\nchannel');
 			if (m && (m.type === 'loopend' || m.type === 'elapsed')) msgs.push(m);
 		};
 		let frame = 0;
+		const flat = [];
 		const run = (blocks) => {
 			const out = [];
 			for (let b = 0; b < blocks; b++) {
@@ -1076,6 +1078,7 @@ console.log('\nchannel');
 				const outR = new Float32Array(BLOCK);
 				proc.process([[inL, inL], []], [[outL, outR], []], {});
 				out.push(outL);
+				for (let i = 0; i < BLOCK; i++) flat.push(outL[i]);
 				frame += BLOCK;
 			}
 			return out;
@@ -1084,6 +1087,7 @@ console.log('\nchannel');
 			proc,
 			msgs,
 			run,
+			gain: (i) => flat[i],
 			loops: () => msgs.filter((m) => m.type === 'loopend'),
 			els: () => msgs.filter((m) => m.type === 'elapsed'),
 		};
@@ -1136,6 +1140,52 @@ console.log('\nchannel');
 	const after = a.run(80);
 	check('events stop after stop', a.msgs.length === before, `n=${a.msgs.length}`);
 	check('gain released to unity after stop', Math.abs(after[40][0] - 1) < 0.02, `g=${after[40][0]}`);
+
+	// signal delay (the pitch shifter sits before this node): the fade must follow
+	// the *audible* wrap, which arrives `delay` seconds after the zero-latency
+	// clock reports it. Without compensation the fade would sit one delay late and
+	// the wrap would click. DELAY/LOOP = 0.1 keeps it inside `fadeActive`.
+	const DELAY = 0.01; // 441 samples at 44100
+	const dfl = make();
+	dfl.proc.port.onmessage({
+		data: {
+			type: 'start',
+			startTime: 0,
+			startPos: 0,
+			loop: true,
+			loopStart: 0,
+			loopEnd: LOOP,
+			rate: 1,
+			fadeDur: 0.006,
+			delay: DELAY,
+			elapsed: false,
+		},
+	});
+	dfl.run(Math.ceil((SR * 0.25) / BLOCK));
+	const dGain = (i) => dfl.gain(i);
+	const shift = Math.round(DELAY * SR);
+	// The fade window moves *early* by one delay: it opens `shift` samples before
+	// the clock's wrap and closes as the audible wrap (shift samples later) arrives.
+	check(
+		'fades to ~0 one delay before the clock wrap',
+		dGain(4410 - shift) < 0.05,
+		`g=${dGain(4410 - shift).toFixed(3)}`,
+	);
+	check(
+		'uncompensated position (the clock wrap) is not faded',
+		dGain(4410 + 200) > 0.5,
+		`g=${dGain(4410 + 200).toFixed(3)}`,
+	);
+	check(
+		'passes through between the delayed fades',
+		Math.abs(dGain(4410) - 1) < 0.05,
+		`g=${dGain(4410).toFixed(3)}`,
+	);
+	check(
+		'fades again one delay before the second clock wrap',
+		dGain(8820 - shift) < 0.05,
+		`g=${dGain(8820 - shift).toFixed(3)}`,
+	);
 
 	// non-looping, rate-scaled elapsed, no wrap pulse
 	const b = make();

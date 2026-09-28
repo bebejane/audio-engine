@@ -29,6 +29,11 @@ class ChannelProcessor extends AudioWorkletProcessor {
 		this.sinceStart = 0; // output frames since the anchor (intro fade)
 		this.gain = 1; // current anti-click gain (released on stop)
 		this.rebaseline = false;
+		// Signal delay of anything between the source and this node (the pitch
+		// shifter). The clock below is a zero-latency model of the source, so
+		// audio arriving here is `delay` seconds behind that model; the fade
+		// window is shifted by the same amount to sit on the real wrap.
+		this.delay = 0;
 		this.emitElapsed = false;
 		this.elapsedPeriod = 0.03; // seconds between `elapsed` messages
 		this.elapsedAccum = 0;
@@ -50,6 +55,7 @@ class ChannelProcessor extends AudioWorkletProcessor {
 			this.loopEnd = d.loopEnd || 0;
 			this.rate = d.rate > 0 ? d.rate : 1;
 			this.fadeDur = d.fadeDur > 0 ? d.fadeDur : 0.006;
+			this.delay = d.delay > 0 ? d.delay : 0;
 			this.startTime = d.startTime;
 			this.startPos = d.startPos;
 			this.sinceStart = 0;
@@ -158,12 +164,20 @@ class ChannelProcessor extends AudioWorkletProcessor {
 				g = 1;
 				// intro ramp covers the click at (re)start
 				if (this.sinceStart + i < fadeFrames) g = (this.sinceStart + i) / fadeFrames;
-				if (fadeActive && u >= 0) {
-					var pos = u - len * Math.floor(u / len); // [0, len)
-					var rem = (len - pos) / this.rate; // seconds until the wrap
-					var since = pos / this.rate; // seconds since the wrap
-					if (rem < this.fadeDur) g = Math.min(g, rem / this.fadeDur);
-					else if (since < this.fadeDur) g = Math.min(g, since / this.fadeDur);
+				if (fadeActive) {
+					// The wrap this fade belongs to is heard `delay` seconds after
+					// the clock above reports it, so look ahead by that much and
+					// fade around the *audible* wrap instead. Without this (e.g.
+					// the pitch shifter in the path) the fade lands late and the
+					// wrap clicks.
+					var ahead = this.delay * this.rate;
+					if (u + ahead >= 0) {
+						var pos = (u + ahead) - len * Math.floor((u + ahead) / len); // [0, len)
+						var rem = (len - pos) / this.rate; // seconds until the wrap
+						var since = pos / this.rate; // seconds since the wrap
+						if (rem < this.fadeDur) g = Math.min(g, rem / this.fadeDur);
+						else if (since < this.fadeDur) g = Math.min(g, since / this.fadeDur);
+					}
 				}
 				this.gain = g;
 				u += step;

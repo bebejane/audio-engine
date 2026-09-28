@@ -22,10 +22,10 @@ const effectsDir = join(root, 'src/effects');
 const sharedDir = join(effectsDir, 'worklet');
 const outFile = join(effectsDir, 'workletsource.generated.ts');
 
-// shared fragments, in dependency order (core helpers before korg35's factory)
+// shared fragments, in dependency order (core helpers first)
 // channel.js is the per-sound channel processor used directly by Sound (loop
 // clock + anti-click fade + elapsed), not an effect
-const SHARED = ['core.js', 'korg35.js', 'channel.js'];
+const SHARED = ['core.js', 'channel.js'];
 
 const read = (path) => readFileSync(path, 'utf8').trim();
 

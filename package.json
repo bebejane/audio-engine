@@ -34,7 +34,8 @@
 	"devDependencies": {
 		"@types/node": "^26.6.3",
 		"typedoc": "^0.28.20",
-		"typescript": "^5.9.3"
+		"typescript": "^5.9.3",
+		"web-audio-api": "1.5.6"
 	},
 	"packageManager": "pnpm@12.3.4"
 }

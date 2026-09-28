@@ -73,18 +73,12 @@ const EFFECTS: EffectDefinition[] = [
 			mix: {value:1, max:1, min:0, type:'float', name:'Mix'}
 		},
 	},{
-		id:'korg35hpf',
-		name: 'Korg 35 HPF',
+		id:'korg35filter',
+		name: 'Korg 35 Filter',
 		defaults:{
 			cutoff: {value:350, max:20000, min:20, type:'integer', name:'Cutoff'},
-			q: {value:1, max:10, min:0.5, type:'float', name:'Q'}
-		},
-	},{
-		id:'korg35lpf',
-		name: 'Korg 35 LPF',
-		defaults:{
-			cutoff: {value:350, max:20000, min:20, type:'integer', name:'Cutoff'},
-			q: {value:1, max:10, min:0.5, type:'float', name:'Q'}
+			q: {value:1, max:10, min:0.5, type:'float', name:'Q'},
+			highpass: {value:false, max:true, min:false, type:'boolean', name:'Highpass'}
 		},
 	},{
 		id:'lowpassfilter',
@@ -206,8 +200,7 @@ import DubDelay from './dubdelay'
 import Flanger from './flanger'
 import HighPassFilter from './highpassfilter'
 import J60Chorus from './j60chorus'
-import Korg35HighPassFilter from './korg35hpf'
-import Korg35LowPassFilter from './korg35lpf'
+import Korg35Filter from './korg35filter'
 import LowPassFilter from './lowpassfilter'
 import MagneticTape from './magnetictape'
 import PingPongDelay from './pingpongdelay'
@@ -254,8 +247,7 @@ const EFFECT_CLASSES: Record<string, EffectCtor> = {
 	lowpassfilter: LowPassFilter,
 	magnetictape: MagneticTape,
 	j60chorus: J60Chorus,
-	korg35hpf: Korg35HighPassFilter,
-	korg35lpf: Korg35LowPassFilter,
+	korg35filter: Korg35Filter,
 	tapedelay: TapeDelay,
 	tapesaturation: TapeSaturation,
 }
