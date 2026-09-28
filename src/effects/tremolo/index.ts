@@ -3,11 +3,11 @@ import { isInRange } from '../../utils'
 import { createWorkletEffectNode } from '../worklet'
 
 /**
- * Tremolo (sine LFO amplitude modulation). DSP in the pp-tremolo worklet;
+ * Tremolo (sine LFO amplitude modulation). DSP in the tremolo worklet;
  * the depth curve and dry/wet mirror the original shaper + gain graph.
  */
 export default class Tremolo extends Effect {
-	/** Build the effect: create the pp-tremolo worklet node and apply options. */
+	/** Build the effect: create the tremolo worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			speed: { value: 4, max: 20, min: 0, type: 'integer', name: 'Speed' },
@@ -17,7 +17,7 @@ export default class Tremolo extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-tremolo',
+			'tremolo',
 			this.collectInit(),
 		)
 		this.initParams()

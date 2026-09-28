@@ -146,10 +146,10 @@ class Recorder extends EventEmitter{
         try{
             // register the worklet once per AudioContext: the engine owns two
             // Recorder instances (master + sampler) on the same context, and a
-            // second addModule would re-register 'purplepurples-recorder'
+            // second addModule would re-register 'recorder'
             const { ensureRecorderWorklet } = await import('./record/worklet');
             await ensureRecorderWorklet(this.context);
-            this._processor = new AudioWorkletNode(this.context, 'purplepurples-recorder', {
+            this._processor = new AudioWorkletNode(this.context, 'recorder', {
                 numberOfInputs: 1,
                 numberOfOutputs: 1,
                 channelCount: Math.max(1, this._numChannels),
@@ -252,7 +252,7 @@ class Recorder extends EventEmitter{
     /** Build the recording descriptor, resolve the promise and emit progress. */
     _handleFinish(blob: Blob, buffer: Float32Array[], duration: number){
         
-        const name = "Purple #" + (this._recordingId+1) + " " + moment().format("MMM DD HH:mm:ss")
+        const name = "Rec #" + (this._recordingId+1) + " " + moment().format("MMM DD HH:mm:ss")
         const recording = {
             id: this._recordingId++,
             url: URL.createObjectURL(blob),

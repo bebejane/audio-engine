@@ -1,4 +1,4 @@
-class PPHighPassProcessor extends AudioWorkletProcessor {
+class HighPassProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.type = 'highpass';
@@ -12,5 +12,5 @@ class PPHighPassProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPHighPassProcessor.parameterDescriptors = ppDesc([['frequency', 350, 10, 22050], ['peak', 0.0001, 0, 1000]]);
-registerProcessor('pp-highpassfilter', PPHighPassProcessor);
+HighPassProcessor.parameterDescriptors = ppDesc([['frequency', 350, 10, 22050], ['peak', 0.0001, 0, 1000]]);
+registerProcessor('highpassfilter', HighPassProcessor);

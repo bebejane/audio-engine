@@ -1,4 +1,4 @@
-class PPConvolverProcessor extends AudioWorkletProcessor {
+class ConvolverProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.convL = ppConvolver();
@@ -32,5 +32,5 @@ class PPConvolverProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPConvolverProcessor.parameterDescriptors = ppDesc([['mix', 0.5, 0, 1]]);
-registerProcessor('pp-convolver', PPConvolverProcessor);
+ConvolverProcessor.parameterDescriptors = ppDesc([['mix', 0.5, 0, 1]]);
+registerProcessor('convolver', ConvolverProcessor);

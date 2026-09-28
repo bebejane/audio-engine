@@ -1,4 +1,4 @@
-class PPPingPongProcessor extends AudioWorkletProcessor {
+class PingPongProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.dlyA = ppDelayLine(Math.ceil(sampleRate * 2));
@@ -27,5 +27,5 @@ class PPPingPongProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPPingPongProcessor.parameterDescriptors = ppDesc([['feedback', 0.5, 0, 1], ['time', 0.3, 0, 2], ['mix', 0.5, 0, 1]]);
-registerProcessor('pp-pingpongdelay', PPPingPongProcessor);
+PingPongProcessor.parameterDescriptors = ppDesc([['feedback', 0.5, 0, 1], ['time', 0.3, 0, 2], ['mix', 0.5, 0, 1]]);
+registerProcessor('pingpongdelay', PingPongProcessor);

@@ -1,4 +1,4 @@
-class PPRingModulatorProcessor extends AudioWorkletProcessor {
+class RingModulatorProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.frame = 0;
@@ -35,5 +35,5 @@ class PPRingModulatorProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPRingModulatorProcessor.parameterDescriptors = ppDesc([['speed', 30, 0, 2000], ['distortion', 0.2, 0.2, 50], ['mix', 0.5, 0, 1]]);
-registerProcessor('pp-ringmodulator', PPRingModulatorProcessor);
+RingModulatorProcessor.parameterDescriptors = ppDesc([['speed', 30, 0, 2000], ['distortion', 0.2, 0.2, 50], ['mix', 0.5, 0, 1]]);
+registerProcessor('ringmodulator', RingModulatorProcessor);

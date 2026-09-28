@@ -1,4 +1,4 @@
-class PPDubDelayProcessor extends AudioWorkletProcessor {
+class DubDelayProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.dlyL = ppDelayLine(Math.ceil(sampleRate * 2));
@@ -31,5 +31,5 @@ class PPDubDelayProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPDubDelayProcessor.parameterDescriptors = ppDesc([['feedback', 0.6, 0, 1], ['time', 0.7, 0, 2], ['mix', 0.5, 0, 1], ['cutoff', 700, 0, 4000]]);
-registerProcessor('pp-dubdelay', PPDubDelayProcessor);
+DubDelayProcessor.parameterDescriptors = ppDesc([['feedback', 0.6, 0, 1], ['time', 0.7, 0, 2], ['mix', 0.5, 0, 1], ['cutoff', 700, 0, 4000]]);
+registerProcessor('dubdelay', DubDelayProcessor);

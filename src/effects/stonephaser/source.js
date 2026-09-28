@@ -83,7 +83,7 @@ function ppSmoother(init, pole) {
 	};
 }
 
-class PPStonePhaserProcessor extends AudioWorkletProcessor {
+class StonePhaserProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.tbl = ppPhaserTriTable();
@@ -163,7 +163,7 @@ class PPStonePhaserProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPStonePhaserProcessor.parameterDescriptors = ppDesc([
+StonePhaserProcessor.parameterDescriptors = ppDesc([
 	['speed', 0.2, 0.01, 5],
 	['feedback', 0.75, 0, 0.99],
 	['feedbackBassCut', 500, 10, 5000],
@@ -171,4 +171,4 @@ PPStonePhaserProcessor.parameterDescriptors = ppDesc([
 	['color', 1, 0, 1],
 	['phase', 0, -180, 180],
 ]);
-registerProcessor('pp-stonephaser', PPStonePhaserProcessor);
+registerProcessor('stonephaser', StonePhaserProcessor);

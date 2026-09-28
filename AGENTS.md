@@ -20,6 +20,9 @@ Public entry point: [`src/index.ts`](./src/index.ts).
 pnpm install
 pnpm typecheck      # tsc --noEmit
 pnpm test           # pretest regenerates the worklet, then runs the DSP harness
+pnpm test:stress    # engine soak test (real AudioEngine on a mock Web Audio API)
+pnpm test:stress:heavy  # same, wider grid + longer soak
+pnpm stress:browser # build + serve the in-browser stress page (:8123)
 pnpm worklet:gen    # regenerate src/effects/workletsource.generated.ts
 pnpm worklet:check  # fail if the generated worklet source is stale
 pnpm docs:api       # TypeDoc -> docs/api/ (generated, gitignored)
@@ -35,9 +38,9 @@ pnpm docs:api       # TypeDoc -> docs/api/ (generated, gitignored)
 ```
 src/
   audioengine.ts   AudioEngine — the public class (context, grid, devices, effects)
-  sound.ts         one sampler cell: source -> effects -> loop worklet -> panner
+  sound.ts         one sampler cell: source -> effects -> channel worklet -> panner
   master.ts        transport controller (engine.master)
-  model.ts         ModelManager — .purple.zip + presets
+  model.ts         ModelManager — .zip + presets
   automation.ts    records/loops engine parameter changes (R/L)
   analyser.ts      level / time-domain / frequency readers
   recorder.ts      master-mix + microphone recording
@@ -51,6 +54,10 @@ src/
   pitch/           Signalsmith Stretch loader + vendored .mjs
 scripts/build-effects-worklet.mjs   assembles the worklet module
 tests/verify-effects.mjs            offline DSP harness
+tests/stress-engine.mjs             engine stress/soak test (uses the trio below)
+tests/mock-web-audio.mjs            headless Web Audio mock for the stress test
+tests/ts-hook.mjs, register-ts.mjs  TS loader hook so Node can import src/*.ts
+tests/browser/                      in-browser stress page + tiny TS→browser build
 typedoc.json / docs/                documentation
 ```
 
@@ -95,7 +102,7 @@ typecheck` should always pass.
 ## Effects
 
 Each effect is a `class extends Effect` in `src/effects/<id>/index.ts` that builds
-its worklet node (`createWorkletEffectNode(context, 'pp-<id>', this.collectInit())`),
+its worklet node (`createWorkletEffectNode(context, '<id>', this.collectInit())`),
 calls `this.initParams()`, and exposes parameter getters/setters that validate
 ranges and write AudioParams.
 
@@ -127,6 +134,8 @@ To add an effect: add `source.js` + `index.ts`, register it in both `EFFECTS` an
 1. `pnpm typecheck` passes.
 2. If you touched DSP: `pnpm worklet:gen` and `pnpm test` pass, and the generated
    file is committed/updated.
-3. If you changed the public surface: `src/types.ts` updated and `pnpm docs:api`
+3. If you touched engine internals (grid, transport, effects lifecycle, analysers,
+   model/presets): `pnpm test:stress` passes.
+4. If you changed the public surface: `src/types.ts` updated and `pnpm docs:api`
    regenerated (or at least the JSDoc added).
-4. `docs/` guides updated if behavior/formats changed.
+5. `docs/` guides updated if behavior/formats changed.

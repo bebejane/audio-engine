@@ -5,10 +5,10 @@ import { createWorkletEffectNode } from '../worklet'
 /**
  * Flanger — modulated (sine-LFO) fractional delay with feedback. The DSP
  * (base delay, LFO rate/depth mapping, feed loop, dry/wet) runs in the
- * pp-flanger worklet; the same normalized ranges as the original node graph.
+ * flanger worklet; the same normalized ranges as the original node graph.
  */
 export default class Flanger extends Effect {
-	/** Build the effect: create the pp-flanger worklet node and apply options. */
+	/** Build the effect: create the flanger worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			time: { value: 0.45, max: 1, min: 0, type: 'float', name: 'Delay Time' },
@@ -20,7 +20,7 @@ export default class Flanger extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-flanger',
+			'flanger',
 			this.collectInit(),
 		)
 		this.initParams()

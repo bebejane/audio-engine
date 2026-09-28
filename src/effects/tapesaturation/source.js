@@ -425,7 +425,7 @@ function ppTsState(sr) {
 	};
 }
 
-class PPTapeSaturationProcessor extends AudioWorkletProcessor {
+class TapeSaturationProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.st = ppTsState(sampleRate);
@@ -464,7 +464,7 @@ class PPTapeSaturationProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPTapeSaturationProcessor.parameterDescriptors = ppDesc([
+TapeSaturationProcessor.parameterDescriptors = ppDesc([
 	['drive', 0.25, 0, 1],
 	['warmth', 0.35, 0, 1],
 	['bias', 0, -1, 1],
@@ -473,4 +473,4 @@ PPTapeSaturationProcessor.parameterDescriptors = ppDesc([
 	['mix', 1, 0, 1],
 	['output', 0, -1, 1],
 ]);
-registerProcessor('pp-tapesaturation', PPTapeSaturationProcessor);
+registerProcessor('tapesaturation', TapeSaturationProcessor);

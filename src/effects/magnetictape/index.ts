@@ -4,7 +4,7 @@ import { createWorkletEffectNode } from '../worklet'
 
 /**
  * Magnetic Tape Emulation — the tape desecration chain from "The Kiss of
- * Shame" (hollance/TheKissOfShame), running in the `pp-magnetictape` worklet.
+ * Shame" (hollance/TheKissOfShame), running in the `magnetictape` worklet.
  * Licensed under the GPL-3.0 — see `LICENSE.txt`.
  *
  * A per-sample chain: input drive → input saturation (odd/even harmonic
@@ -24,7 +24,7 @@ import { createWorkletEffectNode } from '../worklet'
  * `sampleRate`, so it holds at 48 kHz and above.
  */
 export default class MagneticTape extends Effect {
-	/** Build the effect: create the pp-magnetictape worklet node and apply options. */
+	/** Build the effect: create the magnetictape worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			inputDrive: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Input Drive' },
@@ -38,7 +38,7 @@ export default class MagneticTape extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-magnetictape',
+			'magnetictape',
 			this.collectInit(),
 		)
 		this.initParams()

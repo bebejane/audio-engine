@@ -3,10 +3,10 @@ import { isInRange } from '../../utils'
 import { createWorkletEffectNode } from '../worklet'
 
 /**
- * Stereo panner (equal-power). DSP in the pp-stereopanner worklet.
+ * Stereo panner (equal-power). DSP in the stereopanner worklet.
  */
 export default class StereoPanner extends Effect {
-	/** Build the effect: create the pp-stereopanner worklet node and apply options. */
+	/** Build the effect: create the stereopanner worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			pan: { value: 0, max: 1, min: -1, type: 'integer', name: 'Pan' },
@@ -14,7 +14,7 @@ export default class StereoPanner extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-stereopanner',
+			'stereopanner',
 			this.collectInit(),
 		)
 		this.initParams()

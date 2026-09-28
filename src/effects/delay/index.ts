@@ -3,12 +3,12 @@ import { isInRange } from '../../utils'
 import { createWorkletEffectNode } from '../worklet'
 
 /**
- * Feedback delay. DSP runs in the pp-delay AudioWorklet; `time` is automated
+ * Feedback delay. DSP runs in the delay AudioWorklet; `time` is automated
  * exactly like the old native DelayNode (cancel + exp ramp), `mix` keeps the
  * setTargetAtTime smoothing.
  */
 export default class Delay extends Effect {
-	/** Build the effect: create the pp-delay worklet node and apply options. */
+	/** Build the effect: create the delay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			feedback: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Feedback' },
@@ -18,7 +18,7 @@ export default class Delay extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-delay',
+			'delay',
 			this.collectInit(),
 		)
 		this.initParams()

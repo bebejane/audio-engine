@@ -21,7 +21,7 @@
 // allocation-free.
 
 // Measured Juno-60 BBD input / output charge-filter specs (bbd_filter.cpp).
-var PPJ60_IN = {
+var J60_IN = {
 	M: 5,
 	Rre: [251589, -130428, -130428, 4634, 4634],
 	Rim: [0, -4165, 4165, -22873, 22873],
@@ -29,7 +29,7 @@ var PPJ60_IN = {
 	Pim: [0, 25082, -25082, -59437, 59437],
 	isInput: 1,
 };
-var PPJ60_OUT = {
+var J60_OUT = {
 	M: 5,
 	Rre: [5092, 11256, 11256, -13802, -13802],
 	Rim: [0, -99566, 99566, -24606, 24606],
@@ -104,8 +104,8 @@ function ppBbdInterpG(f, d, outRe, outIm) {
 // storing a charge through the input filter and reading the charge delta
 // through the output filter. process(x, fclk) with fclk = Fclk/Fs.
 function ppBbdLine(fs, ns) {
-	var fin = ppBbdComplexFilter(PPJ60_IN, fs, 128);
-	var fout = ppBbdComplexFilter(PPJ60_OUT, fs, 128);
+	var fin = ppBbdComplexFilter(J60_IN, fs, 128);
+	var fout = ppBbdComplexFilter(J60_OUT, fs, 128);
 	var Min = fin.M, Mout = fout.M;
 	var mem = new Float64Array(ns);
 	var imem = 0, pclk = 0, ptick = 0, ybbdOld = 0;
@@ -231,7 +231,7 @@ function ppJ60ChorusState(fs) {
 	};
 }
 
-class PPJ60ChorusProcessor extends AudioWorkletProcessor {
+class J60ChorusProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.st = ppJ60ChorusState(sampleRate);
@@ -253,9 +253,9 @@ class PPJ60ChorusProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPJ60ChorusProcessor.parameterDescriptors = ppDesc([
+J60ChorusProcessor.parameterDescriptors = ppDesc([
 	['chorusI', 0, 0, 1],
 	['chorusII', 1, 0, 1],
 	['mix', 1, 0, 1],
 ]);
-registerProcessor('pp-j60chorus', PPJ60ChorusProcessor);
+registerProcessor('j60chorus', J60ChorusProcessor);

@@ -6,7 +6,7 @@ import { createWorkletEffectNode } from '../worklet'
  * Stone Phaser — 4-stage analog phaser ported from the Faust DSP in
  * jpcima/stone-phaser (BSL-1.0 / CC0-1.0). The whole graph (input and feedback
  * high-passes, four share-one-coefficient allpass stages, LFO) runs in the
- * pp-stonephaser worklet.
+ * stonephaser worklet.
  *
  * Unlike the other effects, every control here is already one-pole smoothed
  * inside the DSP (100 ms, Faust "tsmooth"), so the setters write the AudioParam
@@ -14,7 +14,7 @@ import { createWorkletEffectNode } from '../worklet'
  * smoothing would make the phaser feel sluggish.
  */
 export default class StonePhaser extends Effect {
-	/** Build the effect: create the pp-stonephaser worklet node and apply options. */
+	/** Build the effect: create the stonephaser worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			speed: { value: 0.2, max: 5, min: 0.01, type: 'float', name: 'Speed' },
@@ -30,7 +30,7 @@ export default class StonePhaser extends Effect {
 		init.color = init.color ? 1 : 0
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-stonephaser',
+			'stonephaser',
 			init,
 		)
 		this.initParams()

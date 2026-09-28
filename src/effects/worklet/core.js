@@ -222,7 +222,7 @@ function ppCompressorState() {
 		return x * gain;
 	};
 }
-// diode saturator used by pp-ringmodulator (even function, like the shared
+// diode saturator used by ringmodulator (even function, like the shared
 // WaveShaper curve: d(-v) == d(v))
 function ppDiode(h, v) {
 	var a = Math.abs(v);
@@ -232,7 +232,7 @@ function ppDiode(h, v) {
 	if (a <= vl) return h * ((a - vb) * (a - vb)) / (2 * (vl - vb));
 	return h * a - h * vl + h * ((vl - vb) * (vl - vb)) / (2 * (vl - vb));
 }
-// distortion curve shared by pp-distortion and pp-quadrafuzz
+// distortion curve shared by distortion and quadrafuzz
 function ppDistort(x, gain) {
 	var g = gain | 0;
 	if (g <= 0) return (3 * x * 20 * Math.PI / 180) / Math.PI;

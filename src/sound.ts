@@ -141,8 +141,8 @@ export interface SoundOptions extends Record<string, any> {
 }
 
 /**
- * One sampler cell: owns an AudioBufferSourceNode + a volume/loop-fade/panner
- * chain and an ordered effect chain, and emits `state`/`*<id>` events the
+ * One sampler cell: owns an AudioBufferSourceNode + a volume/channel-processor/
+ * panner chain and an ordered effect chain, and emits `state`/`*<id>` events the
  * engine forwards.
  *
  * A Sound is created by `AudioEngine.add()`/`createSound()` and usually lives
@@ -168,7 +168,6 @@ class Sound extends EventEmitter {
 	effectsInputNode: GainNode;
 	effectsOutputNode: GainNode;
 	chain: AudioNode[];
-	elapseTimeout: NodeJS.Timeout | null;
 	fadeInTimeout: NodeJS.Timeout | null;
 	fadeOutTimeout: NodeJS.Timeout | null;
 	_buffer: ArrayBuffer | null;
@@ -184,10 +183,12 @@ class Sound extends EventEmitter {
 	_pitchActive: boolean;
 	_stretch: StretchLike | null;
 	_pitchPending: boolean;
+	/** Create the pitch node eagerly at construction (trades memory for no first-use load). */
+	_preloadPitch: boolean;
 	_loopFadeDur: number;
-	_loopNode: AudioWorkletNode | null;
-	_loopNodePending: boolean;
-	_loopNodeFailed: boolean;
+	_channelNode: AudioWorkletNode | null;
+	_channelNodePending: boolean;
+	_channelNodeFailed: boolean;
 	_bufferVersion: number;
 	_destroyed: boolean;
 	_offset: number;
@@ -223,7 +224,8 @@ class Sound extends EventEmitter {
 	_reversed: boolean;
 	_reverse: boolean | undefined;
 	_id: string;
-	_clearElapsedEnded: () => void | null;
+	/** Whether the current playback reports `elapsed` (enableElapsed or play opt). */
+	_emitElapsed: boolean;
 
 	constructor(
 		id: string,
@@ -276,13 +278,15 @@ class Sound extends EventEmitter {
 		// createPanner takes no options; 'equalpower' is already the default
 		this.panner = this.context.createPanner();
 		this._loopFadeDur = 0.006;
-		// Loop clock + anti-click fade live on the audio thread (see
-		// src/effects/worklet/loopfade.js). The node is created lazily on the
-		// first loop and kept for the sound's lifetime; until it exists the
-		// sound plays straight into the panner.
-		this._loopNode = null;
-		this._loopNodePending = false;
-		this._loopNodeFailed = false;
+		// Per-sound channel processor (loop clock + anti-click fade + elapsed)
+		// lives on the audio thread (see src/effects/worklet/channel.js). The
+		// node is created lazily on the first loop/elapsed play and kept for the
+		// sound's lifetime; until it exists the sound plays straight to the
+		// panner and elapsed falls back to no reporting.
+		this._channelNode = null;
+		this._channelNodePending = false;
+		this._channelNodeFailed = false;
+		this._emitElapsed = false;
 		this.source = null;
 		this.effectsInputNode = this.context.createGain();
 		this.effectsOutputNode = this.context.createGain();
@@ -295,6 +299,12 @@ class Sound extends EventEmitter {
 		this._pitchActive = Math.abs(this._pitch || 0) > 0.01;
 		this._stretch = null;
 		this._pitchPending = false;
+		this._preloadPitch = !!opt.preloadPitch;
+		// eagerly create the pitch node when preloading, so the first pitch
+		// change doesn't pay the shifter module load / node construction. The
+		// node is still only connected while pitch ≠ 0 (see _connectChain), so
+		// there is no latency/CPU cost until the sound is actually pitched.
+		if (this._preloadPitch) this._ensurePitchNode();
 		this.onEnded = this.onEnded.bind(this);
 	}
 	/**
@@ -324,7 +334,7 @@ class Sound extends EventEmitter {
 
 		if (this.source) {
 			this.source.removeEventListener('ended', this.onEnded);
-			this._stopLoop();
+			this._stopChannel();
 		}
 
 		if (this._playing && this.source) this.source.stop();
@@ -357,24 +367,20 @@ class Sound extends EventEmitter {
 		this._startedAt = this.context.currentTime;
 		this._playing = true;
 		this._emit('playing', true);
-		this._anchorLoop();
+		// gate elapsed before anchoring so the processor knows to report it
+		this._emitElapsed = !!(this.enableElapsed || opt.enableElapsed);
+		this._anchorChannel();
 
-		if (this.enableElapsed || opt.enableElapsed) {
+		if (this._emitElapsed) {
 			this._clearElapsed();
-			// a looping buffer never fires 'ended', so a fresh once() per play
-			// would pile up listeners (MaxListenersExceededWarning) — swap the
-			// previous one instead of adding yet another
-			if (this._clearElapsedEnded) this.removeListener('ended', this._clearElapsedEnded);
-			this._clearElapsedEnded = () => this._clearElapsed();
-			this.once('ended', this._clearElapsedEnded);
 			this.emit('elapsed', this._offset);
-			this._checkElapsed();
 		}
 		//console.log('play', this._offset, 'muted', this._muted, 'loop', this._loopStart + ' > ' + this._loopEnd, 'dur=', opt.duration, opt.fadeIn, opt.fadeOut)
 	}
 	/**
 	 * (Re)build the audio graph from the source through the optional pitch node,
-	 * the non-bypassed effects, the volume node, fade node and panner into the
+	 * the non-bypassed effects, the volume node, the channel processor and
+	 * panner into the
 	 * master gain.
 	 */
 	_connectChain() {
@@ -400,11 +406,11 @@ class Sound extends EventEmitter {
 				lastOutput = effect;
 			});
 		lastOutput.connect(this.node);
-		// loop worklet (when it exists) owns the anti-click fade; otherwise go
-		// straight to the panner
-		if (this._loopNode) {
-			this.node.connect(this._loopNode);
-			this._loopNode.connect(this.panner);
+		// channel processor (when it exists) owns the anti-click fade; otherwise
+		// go straight to the panner
+		if (this._channelNode) {
+			this.node.connect(this._channelNode);
+			this._channelNode.connect(this.panner);
 		} else {
 			this.node.connect(this.panner);
 		}
@@ -424,11 +430,25 @@ class Sound extends EventEmitter {
 			effects.forEach((e) => {
 				if (e.effect) e.effect.disconnect();
 			});
-			this.node.disconnect();
-			// the loop node may not have been part of the previous chain yet
+			// Detach only the audible destination (panner / channel processor).
+			// A blanket `node.disconnect()` also severed the per-sound analyser
+			// taps created by AudioEngine.analyse(), so track meters went dead
+			// after any chain rebuild (play/stop, mute, effect change) and never
+			// recovered — Analyser.setNode() no-ops when the node is unchanged.
+			// Analyser edges are re-pointed explicitly via setAnalysersNode()
+			// when the node itself is actually replaced.
+			try {
+				this.node.disconnect(this.panner);
+			} catch (e) {}
+			if (this._channelNode) {
+				try {
+					this.node.disconnect(this._channelNode);
+				} catch (e) {}
+			}
+			// the channel node may not have been part of the previous chain yet
 			// (created after playback started), so disconnect all its outputs
 			// rather than a specific destination that may not be connected
-			if (this._loopNode) this._loopNode.disconnect();
+			if (this._channelNode) this._channelNode.disconnect();
 			this.panner.disconnect(this.engine.masterGain);
 		}
 		this._connected = false;
@@ -671,42 +691,26 @@ class Sound extends EventEmitter {
 			this._effectsCache = this.effects.map((e, i) => this._effectEntry(e, i));
 		return this._effectsCache;
 	}
-	/** Tick the playhead (~30ms) while playing, wrapping inside the loop region. */
-	_checkElapsed() {
-		if (!this._playing || this._paused) return;
-		let el = this.context.currentTime - this._startedAt + this._offset;
-		// keep the playhead inside the loop region: the native loop wraps at the
-		// exact boundary while our ticker can lag, so wrap the marker in-modulo
-		// rather than trusting _startedAt to have been reset exactly on time
-		if (this._loop && this._loopEnd > this._loopStart) {
-			const len = this._loopEnd - this._loopStart;
-			const v = (((el - this._loopStart) % len) + len) % len;
-			el = this._loopStart + v;
-		}
-		this._elapsed = el;
-		this.emit('elapsed', this._elapsed);
-		this.elapseTimeout = setTimeout(() => this._checkElapsed(), 30);
-	}
-	/** Stop the elapsed ticker and reset the playhead to 0. */
+	/**
+	 * Reset the playhead to 0 and emit it. The live updates now come from the
+	 * channel processor (`elapsed` messages) rather than a main-thread timer.
+	 */
 	_clearElapsed() {
-		clearTimeout(this.elapseTimeout);
 		this._elapsed = 0;
 		this.emit('elapsed', 0);
 	}
 	/**
-	 * Loop clock + anti-click fades now live on the audio thread in the
-	 * `pp-loopfade` worklet (see src/effects/worklet/loopfade.js), so wrap
-	 * detection is sample accurate and survives main-thread timer throttling.
-	 *
-	 * The worklet only shadows the native source's playhead, so it needs a
-	 * `(startTime, startPos)` anchor re-sent on play, resume and every
-	 * rate/loop change. Creates the node on first use.
+	 * Post the playhead anchor to the channel processor (loop clock + fade +
+	 * elapsed). The native source does the playback; the processor shadows its
+	 * position, so the anchor is re-sent on play, resume and every rate/loop
+	 * change. Creates the node on first use.
 	 */
-	_anchorLoop(): void {
-		if (!this._loop || this._paused || !this._playing || this._rate <= 0) return;
-		if (!(this._loopEnd > this._loopStart)) return;
-		const node = this._loopNode;
-		if (!node) return void this._ensureLoopNode();
+	_anchorChannel(): void {
+		if (!this._playing || this._paused || this._rate <= 0) return;
+		const looping = this._loop && this._loopEnd > this._loopStart;
+		if (!looping && !this._emitElapsed) return;
+		const node = this._channelNode;
+		if (!node) return void this._ensureChannelNode();
 		const now = this.context.currentTime;
 		// playhead at `now`, from the same base the old scheduler used
 		const startPos = (now - this._startedAt) * this._rate + this._offset;
@@ -714,22 +718,25 @@ class Sound extends EventEmitter {
 			type: 'start',
 			startTime: now,
 			startPos,
+			loop: looping,
 			loopStart: this._loopStart,
 			loopEnd: this._loopEnd,
 			rate: this._rate,
 			fadeDur: this._loopFadeDur,
+			elapsed: this._emitElapsed,
+			elapsedPeriod: 0.03,
 		});
 	}
 
-	/** Tell the loop worklet to stop counting/fading (pause, stop, loop off). */
-	_stopLoop(): void {
-		if (this._loopNode) this._loopNode.port.postMessage({ type: 'stop' });
+	/** Tell the channel processor to stop counting/fading/reporting. */
+	_stopChannel(): void {
+		if (this._channelNode) this._channelNode.port.postMessage({ type: 'stop' });
 	}
 
-	/** Create the loop worklet node on demand; re-anchors once it exists. */
-	_ensureLoopNode(): void {
-		if (this._loopNode || this._loopNodeFailed || this._loopNodePending) return;
-		this._loopNodePending = true;
+	/** Create the channel processor node on demand; re-anchors once it exists. */
+	_ensureChannelNode(): void {
+		if (this._channelNode || this._channelNodeFailed || this._channelNodePending) return;
+		this._channelNodePending = true;
 		ensureEffectsWorklet(this.context)
 			.then(() => {
 				if (this._destroyed) return;
@@ -739,51 +746,56 @@ class Sound extends EventEmitter {
 				};
 				let node: AudioWorkletNode;
 				try {
-					node = new AudioWorkletNode(this.context, 'pp-loopfade', {
+					node = new AudioWorkletNode(this.context, 'channel', {
 						...base,
 						outputChannelCount: [2],
 					});
 				} catch (err) {
-					node = new AudioWorkletNode(this.context, 'pp-loopfade', base);
+					node = new AudioWorkletNode(this.context, 'channel', base);
 				}
-				node.port.onmessage = (e) => this._onLoopMessage(e.data);
-				this._loopNode = node;
-				this._loopNodePending = false;
+				node.port.onmessage = (e) => this._onChannelMessage(e.data);
+				this._channelNode = node;
+				this._channelNodePending = false;
 				try {
 					// only rewire if a chain is up — a muted-at-start sound
 					// skips _connectChain and must not be connected just for
-					// the loop node
+					// the channel node
 					if (this._connected) this._connectChain();
-					this._anchorLoop();
+					this._anchorChannel();
 				} catch (err) {
-					console.error('loop worklet wiring failed', err);
+					console.error('channel processor wiring failed', err);
 				}
 			})
 			.catch((err) => {
-				console.error('loop worklet unavailable', err);
-				this._loopNodePending = false;
-				this._loopNodeFailed = true;
+				console.error('channel processor unavailable', err);
+				this._channelNodePending = false;
+				this._channelNodeFailed = true;
 			});
 	}
 
-	/** Handle a message from the loop worklet: currently just the wrap pulse. */
-	_onLoopMessage(data: { type?: string }): void {
-		if (!data || data.type !== 'loopend') return;
-		// re-anchor the main-thread playhead to the wrap, as the old scheduler
-		// did (`_startedAt = wrap`), so pause()/jump()/`elapsed` keep a bounded,
-		// loop-local position instead of counting from the original start
-		if (this._playing && !this._paused) {
-			this._startedAt = this.context.currentTime;
-			this._offset = this._loopStart;
+	/** Handle a channel-processor message: the wrap pulse and the playhead. */
+	_onChannelMessage(data: { type?: string; value?: number }): void {
+		if (!data) return;
+		if (data.type === 'loopend') {
+			// re-anchor the main-thread playhead to the wrap, as the old
+			// scheduler did (`_startedAt = wrap`), so pause()/jump() keep a
+			// bounded, loop-local position instead of counting from the start
+			if (this._playing && !this._paused) {
+				this._startedAt = this.context.currentTime;
+				this._offset = this._loopStart;
+			}
+			this.emit('loopend', true);
+		} else if (data.type === 'elapsed') {
+			this._elapsed = data.value as number;
+			this.emit('elapsed', this._elapsed);
 		}
-		this.emit('loopend', true);
 	}
-	/** Stop playback: clear timers, halt the source and emit ended/stop/playing. */
+	/** Stop playback: halt the source, stop the channel processor and emit. */
 	stop() {
 		if (!this.source) return;
 
 		this._clearElapsed();
-		this._stopLoop();
+		this._stopChannel();
 		clearTimeout(this.fadeOutTimeout);
 		clearTimeout(this.fadeInTimeout);
 
@@ -924,6 +936,9 @@ class Sound extends EventEmitter {
 		if (!this._loop) {
 			this._playing = false;
 			this._emit('playing', false);
+			// the processor would otherwise keep reporting elapsed past the end
+			this._stopChannel();
+			if (this._emitElapsed) this._clearElapsed();
 		}
 		this.emit('ended');
 	}
@@ -935,9 +950,18 @@ class Sound extends EventEmitter {
 	pause(on?: boolean): boolean {
 		if (on) {
 			// stop the loop clock while paused; resume (play) re-anchors it
-			this._stopLoop();
+			this._stopChannel();
 			if (this.source) {
 				this._pausedAt = this._startedAt ? this.context.currentTime - this._startedAt : 0;
+				// detach the source's onended before stopping it: `source.stop()`
+				// fires `ended`, which would leak a synthetic engine 'ended' here
+				// (stopping the channel processor + emitting ended while merely
+				// paused). play() re-attaches it on resume.
+				this.source.removeEventListener('ended', this.onEnded);
+				if (!this._loop && this._playing) {
+					this._playing = false;
+					this._emit('playing', false);
+				}
 				this.source.stop();
 			}
 			this._paused = true;
@@ -1016,8 +1040,8 @@ class Sound extends EventEmitter {
 
 		this._rate = rate !== undefined ? Number(rate) : this._rate;
 		this._emit('rate', this._rate);
-		// re-anchor the loop worklet in place (no timer churn while dragging)
-		this._anchorLoop();
+		// re-anchor the channel processor in place (no timer churn while dragging)
+		this._anchorChannel();
 		return this._rate;
 	}
 
@@ -1025,8 +1049,9 @@ class Sound extends EventEmitter {
 	 * Tempo-preserving pitch shift, in semitones (0 = original, ±24 = ±2
 	 * octaves). Runs the source through the Signalsmith Stretch worklet
 	 * inserted between the source and the effects, so duration, loop points
-	 * and rate are untouched. The node is only connected while pitch ≠ 0 and
-	 * is created lazily.
+	 * and rate are untouched. The node is only connected while pitch ≠ 0 — it is
+	 * created on demand, or eagerly at construction when the engine's
+	 * `preloadPitch` option is set.
 	 */
 	pitch(semitones?: number): number {
 		if (semitones !== undefined) {
@@ -1137,7 +1162,7 @@ class Sound extends EventEmitter {
 	}
 	/**
 	 * Get the loop flag (no arg) or enable/disable looping with optional
-	 * `{ start, end }` bounds (seconds). Restarts the anti-click scheduler.
+	 * `{ start, end }` bounds (seconds). Re-anchors the channel processor.
 	 */
 	loop(on?: boolean, offset: { start?: number; end?: number } = {}): boolean {
 		if (on === undefined) return this._loop;
@@ -1157,9 +1182,12 @@ class Sound extends EventEmitter {
 			this.source.loop = on;
 		}
 		if (!this._loop) {
-			this._stopLoop();
+			// keep elapsed reporting if it is still wanted, otherwise stop the
+			// processor (so it stops looping/fading the now non-looping source)
+			if (this._playing && !this._paused && this._emitElapsed) this._anchorChannel();
+			else this._stopChannel();
 		} else if (this._playing && !this._paused) {
-			this._anchorLoop();
+			this._anchorChannel();
 		}
 		this._emit('loop', on);
 		return this._loop;
@@ -1246,7 +1274,7 @@ class Sound extends EventEmitter {
 	 */
 	load(url?: string): void {
 		this._clearElapsed();
-		this._stopLoop();
+		this._stopChannel();
 		this._loaded = false;
 		this._error = null;
 		this._url = url !== undefined ? url : this._url;
@@ -1396,12 +1424,12 @@ class Sound extends EventEmitter {
 		this.buffer = null;
 		this._buffer = null;
 		this._clearElapsed();
-		this._stopLoop();
-		if (this._loopNode) {
+		this._stopChannel();
+		if (this._channelNode) {
 			try {
-				this._loopNode.disconnect();
+				this._channelNode.disconnect();
 			} catch (e) {}
-			this._loopNode = null;
+			this._channelNode = null;
 		}
 		clearTimeout(this.fadeOutTimeout);
 	}

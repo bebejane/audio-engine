@@ -105,7 +105,7 @@ export abstract class Effect {
 
 /**
  * Biquad filters (lowpass / highpass). The RBJ biquad DSP matching the native
- * BiquadFilterNode runs in the pp-lowpassfilter / pp-highpassfilter worklets.
+ * BiquadFilterNode runs in the lowpassfilter / highpassfilter worklets.
  */
 export abstract class FilterEffect extends Effect {
 	/** 'lowpass' | 'highpass' — the filter kind this instance was built as. */
@@ -158,8 +158,8 @@ export abstract class FilterEffect extends Effect {
  * and high-pass filters. The DSP is a 1:1 port of the Faust sources published
  * in the faustfilters project (<https://github.com/SpotlightKid/faustfilters>,
  * `faust/korg35lpf.dsp` / `faust/korg35hpf.dsp`, Faust by Eric Tarr and
- * Christopher Arndt, STK-4.3 license). It runs in the `pp-korg35lpf` /
- * `pp-korg35hpf` AudioWorklet processors — see `korg35lpf/source.js` and
+ * Christopher Arndt, STK-4.3 license). It runs in the `korg35lpf` /
+ * `korg35hpf` AudioWorklet processors — see `korg35lpf/source.js` and
  * `korg35hpf/source.js`.
  *
  * Both filters expose the same two controls as the reference plugins:

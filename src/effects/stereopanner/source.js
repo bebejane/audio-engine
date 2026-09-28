@@ -1,4 +1,4 @@
-class PPStereoPannerProcessor extends AudioWorkletProcessor {
+class StereoPannerProcessor extends AudioWorkletProcessor {
 	process(inputs, outputs, parameters) {
 		var s = ppSetupStereo(inputs, outputs);
 		if (!s) return true;
@@ -14,5 +14,5 @@ class PPStereoPannerProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPStereoPannerProcessor.parameterDescriptors = ppDesc([['pan', 0, -1, 1]]);
-registerProcessor('pp-stereopanner', PPStereoPannerProcessor);
+StereoPannerProcessor.parameterDescriptors = ppDesc([['pan', 0, -1, 1]]);
+registerProcessor('stereopanner', StereoPannerProcessor);

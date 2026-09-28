@@ -4,10 +4,10 @@ import { createWorkletEffectNode } from '../worklet'
 
 /**
  * Feed-forward compressor. DSP (envelope follower + gain computer modeling the
- * DynamicsCompressorNode) runs in the pp-compressor worklet.
+ * DynamicsCompressorNode) runs in the compressor worklet.
  */
 export default class Compressor extends Effect {
-	/** Build the effect: create the pp-compressor worklet node and apply options. */
+	/** Build the effect: create the compressor worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			threshold: { value: -24, max: 0, min: -100, type: 'integer', name: 'Threshold' },
@@ -19,7 +19,7 @@ export default class Compressor extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-compressor',
+			'compressor',
 			this.collectInit(),
 		)
 		this.initParams()

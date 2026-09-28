@@ -3,7 +3,7 @@ import { isInRange, isBool } from '../../utils'
 import { createWorkletEffectNode } from '../worklet'
 
 /**
- * J60 Chorus — the Juno-60 chorus, running in the `pp-j60chorus` worklet.
+ * J60 Chorus — the Juno-60 chorus, running in the `j60chorus` worklet.
  *
  * The delay is a true switched-capacitor Bucket-Brigade model (256 stages with
  * the measured Juno-60 input/output charge filters), driven by the LFO and mode
@@ -16,7 +16,7 @@ import { createWorkletEffectNode } from '../worklet'
  * 1 = the hardware blend (0.83·dry + BBD wet), 0 = clean dry.
  */
 export default class J60Chorus extends Effect {
-	/** Build the effect: create the pp-j60chorus worklet node and apply options. */
+	/** Build the effect: create the j60chorus worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			chorusI: { value: false, max: true, min: false, type: 'boolean', name: 'Chorus I' },
@@ -30,7 +30,7 @@ export default class J60Chorus extends Effect {
 		init.chorusII = init.chorusII ? 1 : 0
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-j60chorus',
+			'j60chorus',
 			init,
 		)
 		this.initParams()

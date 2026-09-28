@@ -4,7 +4,7 @@ import { createWorkletEffectNode } from '../worklet'
 
 /**
  * Tape Delay — a multi-head tape echo in the spirit of the Roland RE-201 Space
- * Echo, running in the `pp-tapedelay` worklet.
+ * Echo, running in the `tapedelay` worklet.
  *
  * The delay/feedback/mix base comes from cyrusasfa/TapeDelay; the tape
  * character (wow + flutter + scrape-flutter capstan, Jiles-Atherton hysteresis
@@ -19,7 +19,7 @@ import { createWorkletEffectNode } from '../worklet'
  * echoes like the real machine.
  */
 export default class TapeDelay extends Effect {
-	/** Build the effect: create the pp-tapedelay worklet node and apply options. */
+	/** Build the effect: create the tapedelay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			time: { value: 220, max: 600, min: 30, type: 'float', name: 'Time' },
@@ -44,7 +44,7 @@ export default class TapeDelay extends Effect {
 		init.head3 = init.head3 ? 1 : 0
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-tapedelay',
+			'tapedelay',
 			init,
 		)
 		this.initParams()

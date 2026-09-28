@@ -1,5 +1,5 @@
 /**
- * Public entry for the PurplePurples audio engine.
+ * Public entry for the audio engine.
  *
  * Exposes the `AudioEngine` class, the typed facade the app programs against
  * (`AudioEngineFacade`), its options, the effect/model types, and the small

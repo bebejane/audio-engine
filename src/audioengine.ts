@@ -44,13 +44,14 @@ const defaultOptions: AudioEngineOptions = {
 	enableAnalysers: false,
 	enableLoops: false,
 	enableElapsed: false,
+	preloadPitch: true,
 	processSample: false,
 	modelsPath: '/models',
 	audioPath: '/audio',
 };
 
 /**
- * The PurplePurples audio engine: owns the AudioContext, master gain, the
+ * The audio engine: owns the AudioContext, master gain, the
  * sound grid, input/MIDI devices, recording, effect construction, analysis and
  * model/preset I/O.
  *
@@ -101,6 +102,8 @@ class AudioEngine extends EventEmitter {
 	enableAnalysers: boolean;
 	enableLoops: boolean;
 	enableElapsed: boolean;
+	/** Warm the pitch shifter at startup (see AudioEngineOptions.preloadPitch). */
+	preloadPitch: boolean;
 	_onDeviceChange: (() => void) | null;
 	/** In-flight bootstrap promise, so concurrent init() calls share one run. */
 	_bootstrap: Promise<InitResult> | null;
@@ -132,6 +135,7 @@ class AudioEngine extends EventEmitter {
 		this.enableAnalysers = o.enableAnalysers;
 		this.enableLoops = o.enableLoops;
 		this.enableElapsed = o.enableElapsed;
+		this.preloadPitch = !!o.preloadPitch;
 		this.processSample = o.processSample;
 		this.modelsPath = o.modelsPath || '/models';
 		this.audioPath = o.audioPath || '/audio';
@@ -200,7 +204,7 @@ class AudioEngine extends EventEmitter {
 
 		this.master = new Master(this, this._volume);
 
-		// Model/preset I/O (load/save/download .purple.zip + settings snapshots).
+		// Model/preset I/O (load/save/download .zip + settings snapshots).
 		// Kept in a separate class so AudioEngine stays focused on the audio graph.
 		this.modelManager = new ModelManager(this);
 
@@ -213,6 +217,15 @@ class AudioEngine extends EventEmitter {
 		// the first addEffect() (even during model load) can create a node
 		// without waiting for a lazy module load.
 		ensureEffectsWorklet(this.context);
+
+		// Warm the pitch shifter once per engine when preloading is enabled, so
+		// each Sound's eager node creation finds the module already loaded
+		// (headless has no window — the rejection is ignored).
+		if (this.preloadPitch) {
+			import('./pitch/stretch')
+				.then(({ default: loadSignalsmithStretch }) => loadSignalsmithStretch())
+				.catch(() => {});
+		}
 
 		// keep the handler so destroy() can detach it (was leaking per engine)
 		this._onDeviceChange = () => {
@@ -533,6 +546,7 @@ class AudioEngine extends EventEmitter {
 			local: this.electron,
 			enableLoops: this.enableLoops,
 			enableElapsed: this.enableElapsed,
+			preloadPitch: this.preloadPitch,
 			...opt,
 		});
 		// Sound.emitState only ever emits 'state' (never 'state<id>'), so this is
@@ -1005,11 +1019,11 @@ class AudioEngine extends EventEmitter {
 		this.automation.clear();
 		return this.modelManager.createModel(name, cols, rows);
 	}
-	/** Serialize the current state to a .purple.zip Blob (does not download). */
+	/** Serialize the current state to a .zip Blob (does not download). */
 	saveModel(name?: string) {
 		return this.modelManager.saveModel(name);
 	}
-	/** Serialize and download the current model as a .purple.zip. */
+	/** Serialize and download the current model as a .zip. */
 	downloadModel(name?: string) {
 		return this.modelManager.downloadModel(name);
 	}

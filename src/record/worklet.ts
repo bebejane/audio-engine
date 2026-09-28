@@ -9,7 +9,7 @@
 export const RECORDER_WORKLET_SOURCE = `
 const CHUNK_SIZE = 16384;
 /** AudioWorklet processor that buffers input PCM and posts it in chunks. */
-class PurplePurplesRecorderProcessor extends AudioWorkletProcessor {
+class RecorderProcessor extends AudioWorkletProcessor {
 	/** Create the processor with an empty per-channel buffer. */
 	constructor() {
 		super();
@@ -44,7 +44,7 @@ class PurplePurplesRecorderProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-registerProcessor('purplepurples-recorder', PurplePurplesRecorderProcessor);
+registerProcessor('recorder', RecorderProcessor);
 `;
 
 export default RECORDER_WORKLET_SOURCE;
@@ -67,8 +67,8 @@ const loadRecorderWorklet = async (context: AudioContext): Promise<void> => {
  *
  * The engine owns two Recorder instances (master + sampler) on the same
  * AudioContext; each one calls `audioWorklet.addModule`, so without this guard
- * the second load re-runs `registerProcessor('purplepurples-recorder')` in the
- * same worklet scope and throws "purplepurples-recorder is already registered".
+ * the second load re-runs `registerProcessor('recorder')` in the
+ * same worklet scope and throws "recorder is already registered".
  */
 export const ensureRecorderWorklet = (context: AudioContext): Promise<void> => {
 	let promise = workletPromises.get(context);

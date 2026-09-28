@@ -4,7 +4,7 @@ import { createWorkletEffectNode } from '../worklet'
 
 /**
  * Tape Saturation — the asymmetric glue-saturation stage of "Aureate"
- * (basilica-audio/Aureate), running in the `pp-tapesaturation` worklet.
+ * (basilica-audio/Aureate), running in the `tapesaturation` worklet.
  * Licensed under the AGPL-3.0 — see `LICENSE.txt`.
  *
  * A port of the nonlinear stage only. Per sample: input gain → 4× oversample →
@@ -28,7 +28,7 @@ import { createWorkletEffectNode } from '../worklet'
  * and are not part of this effect.
  */
 export default class TapeSaturation extends Effect {
-	/** Build the effect: create the pp-tapesaturation worklet node and apply options. */
+	/** Build the effect: create the tapesaturation worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			drive: { value: 0.25, max: 1, min: 0, type: 'float', name: 'Drive' },
@@ -45,7 +45,7 @@ export default class TapeSaturation extends Effect {
 		init.quality = init.quality ? 1 : 0
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-tapesaturation',
+			'tapesaturation',
 			init,
 		)
 		this.initParams()

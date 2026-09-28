@@ -1,7 +1,7 @@
 # Models & presets
 
 A **model** is a saved grid of sampler cells. It is stored as a
-`.purple.zip` containing an `index.json` plus the audio files (all at the zip
+`.zip` containing an `index.json` plus the audio files (all at the zip
 root). `ModelManager` (`src/model.ts`) owns fetching/unzipping/populating models
 and reading/writing the per-model preset list; `AudioEngine` exposes it through
 thin facade methods and getters (`engine.model`, `engine.models`,

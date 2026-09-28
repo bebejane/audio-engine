@@ -1,4 +1,4 @@
-class PPTremoloProcessor extends AudioWorkletProcessor {
+class TremoloProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.frame = 0;
@@ -21,5 +21,5 @@ class PPTremoloProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPTremoloProcessor.parameterDescriptors = ppDesc([['speed', 4, 0, 20], ['depth', 0.5, 0, 1], ['mix', 0.5, 0, 1]]);
-registerProcessor('pp-tremolo', PPTremoloProcessor);
+TremoloProcessor.parameterDescriptors = ppDesc([['speed', 4, 0, 20], ['depth', 0.5, 0, 1], ['mix', 0.5, 0, 1]]);
+registerProcessor('tremolo', TremoloProcessor);

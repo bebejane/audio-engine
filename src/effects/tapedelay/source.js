@@ -307,7 +307,7 @@ function ppTapeDelayState(sr) {
 	return { configure: configure, processSample: processSample, out: out };
 }
 
-class PPTapeDelayProcessor extends AudioWorkletProcessor {
+class TapeDelayProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.st = ppTapeDelayState(sampleRate);
@@ -340,7 +340,7 @@ class PPTapeDelayProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPTapeDelayProcessor.parameterDescriptors = ppDesc([
+TapeDelayProcessor.parameterDescriptors = ppDesc([
 	['time', 220, 30, 600],
 	['feedback', 0.5, 0, 1.05],
 	['mix', 0.5, 0, 1],
@@ -356,4 +356,4 @@ PPTapeDelayProcessor.parameterDescriptors = ppDesc([
 	['tapeType', 0, 0, 2],
 	['age', 0.2, 0, 1],
 ]);
-registerProcessor('pp-tapedelay', PPTapeDelayProcessor);
+registerProcessor('tapedelay', TapeDelayProcessor);

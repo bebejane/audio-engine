@@ -1,7 +1,7 @@
 # audio-engine
 
-The **PurplePurples** audio engine: a Web Audio sampler / sequencer / mixer with
-no React dependency. Extracted from the `purplepurples` app so it can be versioned
+The **audio-engine** package: a Web Audio sampler / sequencer / mixer with
+no React dependency. Extracted from the app so it can be versioned
 and consumed as a package.
 
 ## Layout

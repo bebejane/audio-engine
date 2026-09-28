@@ -2,7 +2,7 @@
 
 Every effect is a class in `src/effects/<id>/index.ts` extending `Effect`
 (`src/effects/core.ts`). Its DSP runs in an `AudioWorklet` processor
-(`src/effects/<id>/source.js`) registered as `pp-<id>`; the class only exposes
+(`src/effects/<id>/source.js`) registered as `<id>`; the class only exposes
 parameter getters/setters that write the worklet's `AudioParam`s.
 
 Effects are added to a cell's chain with:
@@ -303,10 +303,10 @@ trim and auto gain — those are separate instruments in Aureate.
 
 ## Adding a new effect
 
-1. Create `src/effects/<id>/source.js` with the DSP (`registerProcessor('pp-<id>', …)`).
+1. Create `src/effects/<id>/source.js` with the DSP (`registerProcessor('<id>', …)`).
 2. Create `src/effects/<id>/index.ts` with an `Effect` subclass: declare
    `defaults` (each param's `EffectParamDef` needs a user-facing `name`), build
-   the node via `createWorkletEffectNode(context, 'pp-<id>',
+   the node via `createWorkletEffectNode(context, '<id>',
    this.collectInit())`, then call `this.initParams()` and add parameter
    getters/setters.
 3. Add the catalog entry to `EFFECTS` and the class to `EFFECT_CLASSES` in

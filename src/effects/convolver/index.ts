@@ -4,7 +4,7 @@ import { createWorkletEffectNode } from '../worklet'
 
 /**
  * Convolver: loads the impulse file on the main thread (fetch + decode),
- * posts the channel data to the pp-convolver worklet, which runs a uniform
+ * posts the channel data to the convolver worklet, which runs a uniform
  * partitioned overlap-save convolution. Dry path stays live until the
  * impulse arrives, matching the old ConvolverNode behavior.
  */
@@ -13,7 +13,7 @@ export default class Convolver extends Effect {
 	callback?: (err?: unknown) => void;
 
 	/**
-	 * Build the effect: create the pp-convolver worklet node, then fetch +
+	 * Build the effect: create the convolver worklet node, then fetch +
 	 * decode `options.impulse` and post it as the impulse response.
 	 */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
@@ -23,7 +23,7 @@ export default class Convolver extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-convolver',
+			'convolver',
 			this.collectInit(),
 		)
 		this.initParams()

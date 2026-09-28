@@ -1,6 +1,6 @@
-// Reverb — same DSP as pp-convolver, kept standalone (no cross-chunk class
+// Reverb — same DSP as convolver, kept standalone (no cross-chunk class
 // inheritance) so every effect's source is self-contained.
-class PPReverbProcessor extends AudioWorkletProcessor {
+class ReverbProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.convL = ppConvolver();
@@ -34,5 +34,5 @@ class PPReverbProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPReverbProcessor.parameterDescriptors = ppDesc([['mix', 0.5, 0, 1]]);
-registerProcessor('pp-reverb', PPReverbProcessor);
+ReverbProcessor.parameterDescriptors = ppDesc([['mix', 0.5, 0, 1]]);
+registerProcessor('reverb', ReverbProcessor);

@@ -1,4 +1,4 @@
-class PPQuadrafuzzProcessor extends AudioWorkletProcessor {
+class QuadrafuzzProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.lpL = ppBiquad();
@@ -46,5 +46,5 @@ class PPQuadrafuzzProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPQuadrafuzzProcessor.parameterDescriptors = ppDesc([['lowGain', 0.6, 0, 1], ['midLowGain', 0.8, 0, 1], ['midHighGain', 0.5, 0, 1], ['highGain', 0.6, 0, 1]]);
-registerProcessor('pp-quadrafuzz', PPQuadrafuzzProcessor);
+QuadrafuzzProcessor.parameterDescriptors = ppDesc([['lowGain', 0.6, 0, 1], ['midLowGain', 0.8, 0, 1], ['midHighGain', 0.5, 0, 1], ['highGain', 0.6, 0, 1]]);
+registerProcessor('quadrafuzz', QuadrafuzzProcessor);

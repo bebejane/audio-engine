@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" href="data:," />
+		<title>audio-engine — browser stress test</title>
+		<style>
+			:root {
+				--bg: #0e1116;
+				--panel: #161b22;
+				--panel2: #1c232d;
+				--line: #2b333d;
+				--txt: #d7dee8;
+				--dim: #8b97a7;
+				--accent: #6ea8fe;
+				--good: #4ade80;
+				--warn: #fbbf24;
+				--bad: #f87171;
+			}
+			* { box-sizing: border-box; }
+			body {
+				margin: 0;
+				background: var(--bg);
+				color: var(--txt);
+				font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+			}
+			header {
+				padding: 14px 18px;
+				border-bottom: 1px solid var(--line);
+				display: flex;
+				align-items: center;
+				gap: 14px;
+				flex-wrap: wrap;
+			}
+			h1 { font-size: 15px; margin: 0; font-weight: 600; }
+			.sub { color: var(--dim); }
+			.pill {
+				padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line);
+				background: var(--panel2); color: var(--dim); font-size: 12px;
+			}
+			.pill.on { color: var(--good); border-color: #235c3a; }
+			.pill.off { color: var(--bad); border-color: #5c2323; }
+			main { display: grid; grid-template-columns: 340px 1fr; gap: 14px; padding: 14px; align-items: start; }
+			@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+			.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+			.panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 10px; }
+			.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+			label { color: var(--dim); }
+			input[type=number] {
+				width: 84px; background: var(--bg); color: var(--txt); border: 1px solid var(--line);
+				border-radius: 6px; padding: 5px 7px; font: inherit;
+			}
+			button {
+				background: var(--panel2); color: var(--txt); border: 1px solid var(--line);
+				border-radius: 7px; padding: 6px 11px; font: inherit; cursor: pointer;
+			}
+			button:hover { border-color: var(--accent); }
+			button.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+			button.danger { background: #7f1d1d; border-color: #7f1d1d; color: #fff; }
+			button.on { background: #14532d; border-color: #14532d; color: #fff; }
+			button:disabled { opacity: .45; cursor: not-allowed; }
+			.metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
+			.card { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+			.card .k { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+			.card .v { font-size: 18px; margin-top: 2px; }
+			.card .v.good { color: var(--good); } .card .v.warn { color: var(--warn); } .card .v.bad { color: var(--bad); }
+			#log {
+				height: 240px; overflow: auto; background: #0b0e12; border: 1px solid var(--line);
+				border-radius: 8px; padding: 8px; white-space: pre-wrap; font-size: 12px;
+			}
+			#ramp { width: 100%; border-collapse: collapse; font-size: 12px; }
+			#ramp th, #ramp td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+			#ramp th:first-child, #ramp td:first-child { text-align: left; }
+			#ramp th { color: var(--dim); font-weight: 500; }
+			.hint { color: var(--dim); font-size: 12px; margin-top: 6px; }
+			.stack { display: flex; flex-direction: column; gap: 14px; }
+		</style>
+	</head>
+	<body>
+		<header>
+			<h1>audio-engine stress test</h1>
+			<span class="sub">real Web Audio · many voices · live automation · effects · recording</span>
+			<span id="ctx" class="pill off">context: suspended</span>
+		</header>
+
+		<main>
+			<div class="stack">
+				<div class="panel">
+					<h2>Controls</h2>
+					<div class="row">
+						<button id="start" class="primary">Start audio (click)</button>
+						<button id="stopAll" disabled>Stop all</button>
+					</div>
+					<div class="row">
+						<label>voices</label>
+						<input id="voices" type="number" min="1" max="1024" step="8" value="32" />
+						<button id="spawn" disabled>Add &amp; play</button>
+						<button id="playAll" disabled>Play all</button>
+					</div>
+					<div class="row">
+						<label>click Δ</label>
+						<input id="clickThresh" type="number" min="0.001" max="1" step="0.01" value="0.05" />
+					</div>
+					<div class="row">
+						<button id="automate" disabled>Automate params</button>
+						<button id="effects" disabled>Effects churn</button>
+						<button id="record" disabled>Record</button>
+					</div>
+					<div class="row">
+						<button id="ramp" disabled>Ramp test (auto)</button>
+						<button id="soak" disabled>Soak 15s</button>
+						<button id="reset" class="danger" disabled>Reset</button>
+					</div>
+					<div class="hint">
+						Ramp test adds <b>16 voices every 2s</b> and records fps / audio drift until it
+						breaks. Soak runs voices + automation + effects + recording together.
+					</div>
+				</div>
+
+				<div class="panel">
+					<h2>Ramp results</h2>
+					<table id="rampTable">
+						<thead>
+							<tr><th>voices</th><th>fps</th><th>frame ms</th><th>drift</th><th>peak</th><th>lag ms</th></tr>
+						</thead>
+						<tbody></tbody>
+					</table>
+					<div id="rampNote" class="hint"></div>
+				</div>
+			</div>
+
+			<div class="stack">
+				<div class="panel">
+					<h2>Live metrics</h2>
+					<div class="metrics">
+						<div class="card"><div class="k">fps</div><div class="v" id="mFps">–</div></div>
+						<div class="card"><div class="k">frame ms (avg/max)</div><div class="v" id="mFrame">–</div></div>
+						<div class="card"><div class="k">long frames</div><div class="v" id="mLong">–</div></div>
+						<div class="card"><div class="k">audio drift</div><div class="v" id="mDrift">–</div></div>
+						<div class="card"><div class="k">event-loop lag</div><div class="v" id="mLag">–</div></div>
+						<div class="card"><div class="k">voices (playing/total)</div><div class="v" id="mVoices">–</div></div>
+						<div class="card"><div class="k">master peak / rms</div><div class="v" id="mLevel">–</div></div>
+						<div class="card"><div class="k">clips</div><div class="v" id="mClips">–</div></div>
+						<div class="card"><div class="k">clicks (Δ&gt;<span id="threshLabel">0.05</span>)</div><div class="v" id="mClicks">–</div></div>
+						<div class="card"><div class="k">max Δ / sample</div><div class="v" id="mDelta">–</div></div>
+						<div class="card"><div class="k">effects</div><div class="v" id="mFx">–</div></div>
+						<div class="card"><div class="k">ops/sec</div><div class="v" id="mOps">–</div></div>
+						<div class="card"><div class="k">heap MB</div><div class="v" id="mHeap">–</div></div>
+						<div class="card"><div class="k">latency ms</div><div class="v" id="mLat">–</div></div>
+					</div>
+				</div>
+
+				<div class="panel">
+					<h2>Log</h2>
+					<div id="log"></div>
+				</div>
+			</div>
+		</main>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"events": "./shims/events.js",
+					"jszip": "./shims/jszip.js",
+					"moment": "./shims/moment.js",
+					"webmidi": "./shims/webmidi.js",
+					"lamejs": "./shims/lamejs.js",
+					"wasm-media-encoders": "./shims/wasm-media-encoders.js"
+				}
+			}
+		</script>
+		<script type="module" src="./stress.js"></script>
+	</body>
+</html>

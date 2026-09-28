@@ -1,4 +1,4 @@
-class PPCompressorProcessor extends AudioWorkletProcessor {
+class CompressorProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.compL = ppCompressorState();
@@ -20,5 +20,5 @@ class PPCompressorProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPCompressorProcessor.parameterDescriptors = ppDesc([['threshold', -24, -100, 0], ['knee', 30, 0, 40], ['attack', 0, 0, 1], ['release', 0.25, 0, 1], ['ratio', 1, 0, 20]]);
-registerProcessor('pp-compressor', PPCompressorProcessor);
+CompressorProcessor.parameterDescriptors = ppDesc([['threshold', -24, -100, 0], ['knee', 30, 0, 40], ['attack', 0, 0, 1], ['release', 0.25, 0, 1], ['ratio', 1, 0, 20]]);
+registerProcessor('compressor', CompressorProcessor);

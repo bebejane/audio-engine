@@ -1,7 +1,7 @@
 /**
  * ModelManager — owns all model and preset I/O for the audio engine.
  *
- * Loads/saves/downloads .purple.zip models (fetch, JSZip, sound population),
+ * Loads/saves/downloads .zip models (fetch, JSZip, sound population),
  * and keeps the per-model preset list (snapshots of every sound's settings)
  * that is persisted inside index.json. The React layer only renders the grid
  * and calls these methods; it no longer touches JSZip/sound internals.
@@ -34,7 +34,7 @@ interface SoundItem {
 
 /**
  * Owns model and preset I/O for the engine: fetch/unzip/populate models,
- * serialize the current engine state to a .purple.zip, and read/write the
+ * serialize the current engine state to a .zip, and read/write the
  * slot-addressed preset list persisted inside index.json.
  *
  * Constructed by `AudioEngine` (exposed as `engine.modelManager`); the engine's
@@ -338,7 +338,7 @@ export default class ModelManager {
 	async downloadModel(name?: string) {
 		const res = await this.saveModel(name);
 		if (!res) return undefined;
-		this.download(res.blob, res.model.name + '.purple.zip');
+		this.download(res.blob, res.model.name + '.zip');
 		return res.model;
 	}
 

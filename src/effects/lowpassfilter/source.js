@@ -1,4 +1,4 @@
-class PPLowPassProcessor extends AudioWorkletProcessor {
+class LowPassProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.type = 'lowpass';
@@ -12,5 +12,5 @@ class PPLowPassProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPLowPassProcessor.parameterDescriptors = ppDesc([['frequency', 350, 10, 22050], ['peak', 0.0001, 0, 1000]]);
-registerProcessor('pp-lowpassfilter', PPLowPassProcessor);
+LowPassProcessor.parameterDescriptors = ppDesc([['frequency', 350, 10, 22050], ['peak', 0.0001, 0, 1000]]);
+registerProcessor('lowpassfilter', LowPassProcessor);

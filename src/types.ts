@@ -57,6 +57,14 @@ export interface AudioEngineOptions {
 	enableLoops?: boolean;
 	/** Track playback elapsed time per sound. */
 	enableElapsed?: boolean;
+	/**
+	 * Warm the Signalsmith Stretch pitch shifter at startup: load its module and
+	 * pre-create the per-sound node, so the first pitch change doesn't pay the
+	 * dynamic module load. The node is still only connected while pitch ≠ 0, so
+	 * there is no latency/CPU cost until a sound is actually pitched. Defaults to
+	 * true; set false for many-voice / headless workloads that never pitch.
+	 */
+	preloadPitch?: boolean;
 	/** Trim/normalize recorded samples; `false` disables processing. */
 	processSample?: boolean | ProcessSampleOptions;
 	/** Base path model zips/index.json are fetched from (default '/models'). */
@@ -330,7 +338,7 @@ export interface RawSound {
 /**
  * Model/preset data shapes shared by the engine (lib/audio) and the React app.
  *
- * A "model" is a saved grid of sampler cells (.purple.zip): an index.json plus
+ * A "model" is a saved grid of sampler cells (.zip): an index.json plus
  * the audio files. `presets` snapshots the live settings of every sound so a
  * whole grid state can be restored with one call. Presets are slot-addressed:
  * one slot per number key (1-9, then 0), `null` for an empty slot. Old files

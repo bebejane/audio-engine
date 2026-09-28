@@ -4,10 +4,10 @@ import { createWorkletEffectNode } from '../worklet'
 
 /**
  * Ping-pong delay (delay L -> delay R, feedback back to L). DSP in the
- * pp-pingpongdelay worklet; wet output is stereo (L tap / R tap).
+ * pingpongdelay worklet; wet output is stereo (L tap / R tap).
  */
 export default class PingPongDelay extends Effect {
-	/** Build the effect: create the pp-pingpongdelay worklet node and apply options. */
+	/** Build the effect: create the pingpongdelay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			feedback: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Feedback' },
@@ -17,7 +17,7 @@ export default class PingPongDelay extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-pingpongdelay',
+			'pingpongdelay',
 			this.collectInit(),
 		)
 		this.initParams()

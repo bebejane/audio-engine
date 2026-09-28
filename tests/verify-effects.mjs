@@ -99,10 +99,10 @@ function maxIdx(x) {
 	return { m, idx };
 }
 
-// -- pp-delay --------------------------------------------------------------
-console.log('\npp-delay');
+// -- delay --------------------------------------------------------------
+console.log('\ndelay');
 {
-	const d = makeProc('pp-delay', { feedback: 0, time: 0.1, mix: 0.5 });
+	const d = makeProc('delay', { feedback: 0, time: 0.1, mix: 0.5 });
 	const blocks = 100; // 12800 samples > 4410 delay
 	for (let b = 0; b < blocks; b++) {
 		const buf = new Float32Array(BLOCK);
@@ -116,26 +116,26 @@ console.log('\npp-delay');
 	check('finite', Number.isFinite(L.reduce((a, v) => a + Math.abs(v), 0)));
 }
 
-// -- pp-stereopanner -------------------------------------------------------
-console.log('\npp-stereopanner');
+// -- stereopanner -------------------------------------------------------
+console.log('\nstereopanner');
 {
-	const d = makeProc('pp-stereopanner', { pan: -1 });
+	const d = makeProc('stereopanner', { pan: -1 });
 	const s = sine(220, 0.8, BLOCK * 8);
 	for (let b = 0; b < 8; b++) d.run(s.subarray(b * BLOCK, (b + 1) * BLOCK), s.subarray(b * BLOCK, (b + 1) * BLOCK));
 	const { L, R } = d.drain();
 	check('pan=-1 => left full', maxIdx(L).m > 0.75, `L=${maxIdx(L).m.toFixed(3)}`);
 	check('pan=-1 => right silent', maxIdx(R).m < 1e-6, `R=${maxIdx(R).m.toFixed(3)}`);
-	const d2 = makeProc('pp-stereopanner', { pan: 1 });
+	const d2 = makeProc('stereopanner', { pan: 1 });
 	for (let b = 0; b < 8; b++) d2.run(s.subarray(b * BLOCK, (b + 1) * BLOCK), s.subarray(b * BLOCK, (b + 1) * BLOCK));
 	const r2 = d2.drain();
 	check('pan=1 => right full', maxIdx(r2.R).m > 0.75, `R=${maxIdx(r2.R).m.toFixed(3)}`);
 	check('pan=1 => left silent', maxIdx(r2.L).m < 1e-6);
 }
 
-// -- pp-tremolo ------------------------------------------------------------
-console.log('\npp-tremolo');
+// -- tremolo ------------------------------------------------------------
+console.log('\ntremolo');
 {
-	const d = makeProc('pp-tremolo', { speed: 20, depth: 1, mix: 0.5 });
+	const d = makeProc('tremolo', { speed: 20, depth: 1, mix: 0.5 });
 	const one = new Float32Array(BLOCK).fill(1);
 	const outs = [];
 	for (let b = 0; b < 40; b++) {
@@ -148,10 +148,10 @@ console.log('\npp-tremolo');
 	check('amplitude modulated 1..2', Math.abs(mn - 1) < 0.05 && Math.abs(mx - 2) < 0.05, `min=${mn.toFixed(2)} max=${mx.toFixed(2)}`);
 }
 
-// -- pp-lowpassfilter ------------------------------------------------------
-console.log('\npp-lowpassfilter');
+// -- lowpassfilter ------------------------------------------------------
+console.log('\nlowpassfilter');
 {
-	const d = makeProc('pp-lowpassfilter', { frequency: 100, peak: 0.0001 });
+	const d = makeProc('lowpassfilter', { frequency: 100, peak: 0.0001 });
 	const dc = new Float32Array(BLOCK).fill(1);
 	const outDC = [];
 	for (let b = 0; b < 10; b++) {
@@ -170,11 +170,11 @@ console.log('\npp-lowpassfilter');
 	check('4.4k attenuated at 100Hz cutoff', hiPeak < 0.15, `peak=${hiPeak.toFixed(4)}`);
 }
 
-// -- pp-korg35lpf / pp-korg35hpf -------------------------------------------
+// -- korg35lpf / korg35hpf -------------------------------------------
 // Ported from faustfilters (SpotlightKid) — see korg35filters.ts. Checks the
 // two defining traits of the Korg 35 models: low-pass/high-pass shaping plus
 // the resonance peak that makes these filters musical.
-console.log('\npp-korg35 filters');
+console.log('\nkorg35 filters');
 {
 	const runTone = (name, params, freq, blocks = 16) => {
 		const d = makeProc(name, params);
@@ -192,7 +192,7 @@ console.log('\npp-korg35 filters');
 
 	// low pass
 	{
-		const d = makeProc('pp-korg35lpf', { cutoff: 1000, q: 1 });
+		const d = makeProc('korg35lpf', { cutoff: 1000, q: 1 });
 		const dc = new Float32Array(BLOCK).fill(1);
 		const out = [];
 		for (let b = 0; b < 20; b++) {
@@ -202,20 +202,20 @@ console.log('\npp-korg35 filters');
 		const g = out.slice(BLOCK * 12).reduce((a, v) => a + v, 0) / (8 * BLOCK);
 		check('LPF DC passes (unity)', Math.abs(g - 1) < 0.05, `dcg=${g.toFixed(3)}`);
 
-		const pass = peak(runTone('pp-korg35lpf', { cutoff: 1500, q: 0.707 }, 220));
+		const pass = peak(runTone('korg35lpf', { cutoff: 1500, q: 0.707 }, 220));
 		check('LPF passband preserved', pass > 0.25, `peak=${pass.toFixed(3)}`);
-		const stop = peak(runTone('pp-korg35lpf', { cutoff: 150, q: 0.707 }, 4400));
+		const stop = peak(runTone('korg35lpf', { cutoff: 150, q: 0.707 }, 4400));
 		check('LPF stopband attenuated', stop < 0.05, `peak=${stop.toFixed(4)}`);
 
-		const flat = peak(runTone('pp-korg35lpf', { cutoff: 1000, q: 0.707 }, 1000));
-		const res = peak(runTone('pp-korg35lpf', { cutoff: 1000, q: 5 }, 1000));
+		const flat = peak(runTone('korg35lpf', { cutoff: 1000, q: 0.707 }, 1000));
+		const res = peak(runTone('korg35lpf', { cutoff: 1000, q: 5 }, 1000));
 		check('LPF Q raises the cutoff peak', res > flat * 1.6, `flat=${flat.toFixed(3)} res=${res.toFixed(3)}`);
 		check('LPF finite', Number.isFinite(res));
 	}
 
 	// high pass
 	{
-		const d = makeProc('pp-korg35hpf', { cutoff: 500, q: 1 });
+		const d = makeProc('korg35hpf', { cutoff: 500, q: 1 });
 		const dc = new Float32Array(BLOCK).fill(1);
 		const out = [];
 		for (let b = 0; b < 24; b++) {
@@ -225,29 +225,29 @@ console.log('\npp-korg35 filters');
 		const tail = maxIdx(Float32Array.from(out.slice(BLOCK * 16))).m;
 		check('HPF blocks DC', tail < 0.02, `tail=${tail.toFixed(4)}`);
 
-		const pass = peak(runTone('pp-korg35hpf', { cutoff: 150, q: 0.707 }, 4400));
+		const pass = peak(runTone('korg35hpf', { cutoff: 150, q: 0.707 }, 4400));
 		check('HPF passband preserved', pass > 0.25, `peak=${pass.toFixed(3)}`);
-		const stop = peak(runTone('pp-korg35hpf', { cutoff: 3000, q: 0.707 }, 100));
+		const stop = peak(runTone('korg35hpf', { cutoff: 3000, q: 0.707 }, 100));
 		check('HPF stopband attenuated', stop < 0.05, `peak=${stop.toFixed(4)}`);
 
-		const flat = peak(runTone('pp-korg35hpf', { cutoff: 1000, q: 0.707 }, 1000));
-		const res = peak(runTone('pp-korg35hpf', { cutoff: 1000, q: 5 }, 1000));
+		const flat = peak(runTone('korg35hpf', { cutoff: 1000, q: 0.707 }, 1000));
+		const res = peak(runTone('korg35hpf', { cutoff: 1000, q: 5 }, 1000));
 		check('HPF Q raises the cutoff peak', res > flat * 1.6, `flat=${flat.toFixed(3)} res=${res.toFixed(3)}`);
 		check('HPF finite', Number.isFinite(res));
 	}
 }
 
-// -- pp-j60chorus ----------------------------------------------------------
+// -- j60chorus ----------------------------------------------------------
 // Juno-60 chorus. I and II are stereo (the right LFO is inverted); I+II runs
 // the same phase on both sides and is near-mono. Ported from
 // jpcima/rc-effect-playground (Hera Chorus) — see j60chorus.ts.
-console.log('\npp-j60chorus');
+console.log('\nj60chorus');
 {
 	const SEC = Math.ceil(SR / BLOCK);
 	const blocks = SEC * 2;
 	const tone = sine(220, 0.5, blocks * BLOCK);
 	const capture = (params) => {
-		const d = makeProc('pp-j60chorus', params);
+		const d = makeProc('j60chorus', params);
 		const L = new Float32Array(blocks * BLOCK);
 		const R = new Float32Array(blocks * BLOCK);
 		for (let b = 0; b < blocks; b++) {
@@ -296,11 +296,11 @@ console.log('\npp-j60chorus');
 	check('mix=0 => dry', mErr < 1e-4, `maxErr=${mErr.toExponential(2)}`);
 }
 
-// -- pp-tapedelay ----------------------------------------------------------
+// -- tapedelay ----------------------------------------------------------
 // Multi-head tape echo. Head echoes land at t, 2t, 3t; feedback decays; drive
 // saturates; wow/flutter shifts the tape. Ported from re-deemer (ISC) — see
 // tapedelay.ts.
-console.log('\npp-tapedelay');
+console.log('\ntapedelay');
 {
 	const base = {
 		time: 200, feedback: 0, mix: 1, head1: 1, head2: 0, head3: 0,
@@ -308,7 +308,7 @@ console.log('\npp-tapedelay');
 		tapeType: 0, age: 0,
 	};
 	const capture = (params, blocks, gen) => {
-		const d = makeProc('pp-tapedelay', params);
+		const d = makeProc('tapedelay', params);
 		const out = new Float32Array(blocks * BLOCK);
 		for (let b = 0; b < blocks; b++) {
 			const inb = gen ? gen(b) : new Float32Array(BLOCK);
@@ -381,12 +381,12 @@ console.log('\npp-tapedelay');
 	}
 }
 
-// -- pp-magnetictape -------------------------------------------------------
+// -- magnetictape -------------------------------------------------------
 // Magnetic tape emulation: input drive -> odd/even saturation -> flange ->
 // age macro (lowpass sweep, granular noise, dips, bursts) -> hiss -> shame ->
 // linear dry/wet. Ported from hollance/TheKissOfShame (GPL-3.0) — see
 // magnetictape/LICENSE.txt.
-console.log('\npp-magnetictape');
+console.log('\nmagnetictape');
 {
 	const base = {
 		inputDrive: 0.5, outputLevel: 0.5, shame: 0, age: 0, hiss: 0, mix: 1, flange: 0,
@@ -394,7 +394,7 @@ console.log('\npp-magnetictape');
 	const SEC = Math.ceil(SR / BLOCK);
 	// the harness feeds silence unless a generator is supplied
 	const capture = (params, blocks, gen) => {
-		const d = makeProc('pp-magnetictape', params);
+		const d = makeProc('magnetictape', params);
 		const out = new Float32Array(blocks * BLOCK);
 		for (let b = 0; b < blocks; b++) {
 			const inb = gen ? gen(b) : new Float32Array(BLOCK);
@@ -505,7 +505,7 @@ console.log('\npp-magnetictape');
 	{
 		const prev = globalThis.sampleRate;
 		globalThis.sampleRate = 48000;
-		const d = makeProc('pp-magnetictape', { ...base, shame: 1, age: 1, hiss: 1, flange: 1 });
+		const d = makeProc('magnetictape', { ...base, shame: 1, age: 1, hiss: 1, flange: 1 });
 		globalThis.sampleRate = prev;
 		let peak = 0;
 		let clean = true;
@@ -521,12 +521,12 @@ console.log('\npp-magnetictape');
 	}
 }
 
-// -- pp-tapesaturation -----------------------------------------------------
+// -- tapesaturation -----------------------------------------------------
 // The tape-saturation stage of Aureate: Drive -> 4x oversampled [Warmth
 // HF-rolloff -> 80 Hz head bump -> asymmetric Character saturator, ADAA1 in
 // HQ quality] -> dry/wet -> Output trim. Ported from
 // basilica-audio/Aureate (AGPL-3.0) — see tapesaturation/LICENSE.txt.
-console.log('\npp-tapesaturation');
+console.log('\ntapesaturation');
 {
 	const base = {
 		drive: 0, warmth: 0, bias: 0, character: 0, quality: 0, mix: 1, output: 0,
@@ -544,7 +544,7 @@ console.log('\npp-tapesaturation');
 	const TAU = (2 * Math.PI);
 
 	const capture = (params, blocks, gen) => {
-		const d = makeProc('pp-tapesaturation', { ...base, ...params });
+		const d = makeProc('tapesaturation', { ...base, ...params });
 		const out = new Float32Array(blocks * BLOCK);
 		for (let b = 0; b < blocks; b++) {
 			const inb = gen ? gen(b) : new Float32Array(BLOCK);
@@ -729,7 +729,7 @@ console.log('\npp-tapesaturation');
 	{
 		const prev = globalThis.sampleRate;
 		globalThis.sampleRate = 48000;
-		const d = makeProc('pp-tapesaturation', { ...base, drive: 1, warmth: 1, bias: 1, character: 2, quality: 1 });
+		const d = makeProc('tapesaturation', { ...base, drive: 1, warmth: 1, bias: 1, character: 2, quality: 1 });
 		globalThis.sampleRate = prev;
 		let peak = 0;
 		let clean = true;
@@ -745,42 +745,42 @@ console.log('\npp-tapesaturation');
 	}
 }
 
-// -- pp-distortion ---------------------------------------------------------
-console.log('\npp-distortion');
+// -- distortion ---------------------------------------------------------
+console.log('\ndistortion');
 {
-	const d = makeProc('pp-distortion', { gain: 0 });
+	const d = makeProc('distortion', { gain: 0 });
 	const s = sine(200, 0.9, BLOCK * 8);
 	for (let b = 0; b < 8; b++) d.run(s.subarray(b * BLOCK, (b + 1) * BLOCK));
 	const { L } = d.drain();
 	const p0 = maxIdx(L).m;
 	check('gain=0 => x/3 curve', Math.abs(p0 - 0.3) < 0.02, `peak=${p0.toFixed(3)}`);
-	const d2 = makeProc('pp-distortion', { gain: 1 });
+	const d2 = makeProc('distortion', { gain: 1 });
 	for (let b = 0; b < 8; b++) d2.run(s.subarray(b * BLOCK, (b + 1) * BLOCK));
 	const q = d2.drain();
 	const p1 = maxIdx(q.L).m;
 	check('gain=1 => hotter/nonzero', p1 > p0 && p1 > 0.3, `peak=${p1.toFixed(3)}`);
 }
 
-// -- pp-compressor ---------------------------------------------------------
-console.log('\npp-compressor');
+// -- compressor ---------------------------------------------------------
+console.log('\ncompressor');
 {
-	const d = makeProc('pp-compressor', { threshold: -24, knee: 30, attack: 0, release: 0.25, ratio: 20 });
+	const d = makeProc('compressor', { threshold: -24, knee: 30, attack: 0, release: 0.25, ratio: 20 });
 	const s = sine(220, 1, BLOCK * 16);
 	for (let b = 0; b < 16; b++) d.run(s.subarray(b * BLOCK, (b + 1) * BLOCK));
 	const { L } = d.drain();
 	const steady = maxIdx(L.subarray(BLOCK * 8, BLOCK * 16)).m;
 	check('loud input compressed hard', steady < 0.15, `steady peak=${steady.toFixed(4)}`);
-	const d2 = makeProc('pp-compressor', { threshold: -24, knee: 30, attack: 0, release: 0.25, ratio: 1 });
+	const d2 = makeProc('compressor', { threshold: -24, knee: 30, attack: 0, release: 0.25, ratio: 1 });
 	for (let b = 0; b < 16; b++) d2.run(s.subarray(b * BLOCK, (b + 1) * BLOCK));
 	const q = d2.drain();
 	const flat = maxIdx(q.L.subarray(BLOCK * 8, BLOCK * 16)).m;
 	check('ratio=1 => unity', Math.abs(flat - 1) < 0.02, `peak=${flat.toFixed(3)}`);
 }
 
-// -- pp-flanger ------------------------------------------------------------
-console.log('\npp-flanger');
+// -- flanger ------------------------------------------------------------
+console.log('\nflanger');
 {
-	const d = makeProc('pp-flanger', { time: 0.5, speed: 0.2, depth: 0.5, feedback: 0.5, mix: 0.5 });
+	const d = makeProc('flanger', { time: 0.5, speed: 0.2, depth: 0.5, feedback: 0.5, mix: 0.5 });
 	const s = sine(400, 0.8, BLOCK * 40);
 	for (let b = 0; b < 40; b++) d.run(s.subarray(b * BLOCK, (b + 1) * BLOCK));
 	const { L } = d.drain();
@@ -798,8 +798,8 @@ console.log('\npp-flanger');
 	check('swirling envelope (varies)', envMax > envMin * 1.5, `envMax=${envMax.toFixed(2)} envMin=${envMin.toFixed(2)}`);
 }
 
-// -- pp-stonephaser --------------------------------------------------------
-console.log('\npp-stonephaser');
+// -- stonephaser --------------------------------------------------------
+console.log('\nstonephaser');
 {
 	// all six params must be supplied: the harness has no descriptor defaults
 	const base = { speed: 2, feedback: 0.9, feedbackBassCut: 500, mix: 0.5, color: 1, phase: 0 };
@@ -808,7 +808,7 @@ console.log('\npp-stonephaser');
 	const s = sine(1000, 0.8, blocks * BLOCK);
 
 	const run = (params, stereo = false) => {
-		const d = makeProc('pp-stonephaser', params);
+		const d = makeProc('stonephaser', params);
 		const L = new Float32Array(blocks * BLOCK);
 		const R = new Float32Array(blocks * BLOCK);
 		for (let b = 0; b < blocks; b++) {
@@ -865,7 +865,7 @@ console.log('\npp-stonephaser');
 	// dry/wet nulls are made of, and it is the check that catches a broken
 	// allpass recursion (a resonant one-pole cascade gives a big hump instead).
 	const capture = (params) => {
-		const d = makeProc('pp-stonephaser', params);
+		const d = makeProc('stonephaser', params);
 		for (let b = 0; b < SEC * 2; b++) d.run(new Float32Array(BLOCK)); // frozen LFO
 		const out = new Float32Array(N);
 		for (let b = 0; b < N / BLOCK; b++) {
@@ -909,10 +909,10 @@ console.log('\npp-stonephaser');
 	check('4-stage allpass => 2 nulls', notches === 2, `notches=${notches}`);
 }
 
-// -- pp-pingpongdelay ------------------------------------------------------
-console.log('\npp-pingpongdelay');
+// -- pingpongdelay ------------------------------------------------------
+console.log('\npingpongdelay');
 {
-	const d = makeProc('pp-pingpongdelay', { feedback: 0.5, time: 0.3, mix: 0.5 });
+	const d = makeProc('pingpongdelay', { feedback: 0.5, time: 0.3, mix: 0.5 });
 	const blocks = 300; // 38400 samples; delay=13230
 	for (let b = 0; b < blocks; b++) {
 		const buf = new Float32Array(BLOCK);
@@ -927,10 +927,10 @@ console.log('\npp-pingpongdelay');
 	check('R tap nonzero', r1.m > 0.3, `m=${r1.m.toFixed(3)}`);
 }
 
-// -- pp-quadrafuzz ---------------------------------------------------------
-console.log('\npp-quadrafuzz');
+// -- quadrafuzz ---------------------------------------------------------
+console.log('\nquadrafuzz');
 {
-	const d = makeProc('pp-quadrafuzz', {
+	const d = makeProc('quadrafuzz', {
 		lowGain: 0, midLowGain: 0, midHighGain: 0, highGain: 0,
 	});
 	const s = sine(100, 0.8, BLOCK * 8);
@@ -941,10 +941,10 @@ console.log('\npp-quadrafuzz');
 	check('dry + lowband', peak > 0.8 && peak < 1.3, `peak=${peak.toFixed(3)}`);
 }
 
-// -- pp-ringmodulator ------------------------------------------------------
-console.log('\npp-ringmodulator');
+// -- ringmodulator ------------------------------------------------------
+console.log('\nringmodulator');
 {
-	const d = makeProc('pp-ringmodulator', { speed: 30, distortion: 0.2, mix: 0.5 });
+	const d = makeProc('ringmodulator', { speed: 30, distortion: 0.2, mix: 0.5 });
 	const n = SR; // 1 second
 	const s = sine(100, 0.8, n);
 	const sig = new Float32Array(Math.ceil(n / BLOCK) * BLOCK + BLOCK);
@@ -959,14 +959,14 @@ console.log('\npp-ringmodulator');
 	check('sidebands present (ring modulation)', side > a100 * 0.25, `|100|=${a100.toFixed(1)} side=${side.toFixed(1)}`);
 }
 
-// -- pp-reverb (convolution) -----------------------------------------------
-console.log('\npp-reverb / pp-convolver');
+// -- reverb (convolution) -----------------------------------------------
+console.log('\nreverb / convolver');
 {
 	// deterministic "IR": two taps; mix=1 => wet only (all-pass dry removed)
 	const ir = new Float32Array(512);
 	ir[0] = 1;
 	ir[200] = 0.5;
-	const d = makeProc('pp-reverb', { mix: 1 });
+	const d = makeProc('reverb', { mix: 1 });
 	d.proc.port.onmessage({ data: { type: 'ir', channels: [ir, ir] } });
 	const imp = impulse();
 	const out = new Float32Array(512 * 4);
@@ -979,7 +979,7 @@ console.log('\npp-reverb / pp-convolver');
 	check('no NaN', out.every((v) => Number.isFinite(v)));
 
 	// delay-by-128 with delta IR
-	const d2 = makeProc('pp-convolver', { mix: 1 });
+	const d2 = makeProc('convolver', { mix: 1 });
 	d2.proc.port.onmessage({ data: { type: 'ir', channels: [new Float32Array([1])] } });
 	const ramp = new Float32Array(BLOCK * 8);
 	for (let i = 0; i < ramp.length; i++) ramp[i] = (i % 37) - 18;
@@ -1036,7 +1036,7 @@ console.log('\nstopped source (empty input) => tails ring');
 	};
 
 	const p = { feedback: 0.8, time: 0.1, mix: 0.5 };
-	const d = makeProc('pp-delay', p);
+	const d = makeProc('delay', p);
 	const tone = sine(220, 0.9, BLOCK * 120);
 	for (let b = 0; b < 120; b++) d.run(tone.subarray(b * BLOCK, (b + 1) * BLOCK));
 	const tail = runEmpty(d.proc, p, 80);
@@ -1049,7 +1049,7 @@ console.log('\nstopped source (empty input) => tails ring');
 	ir[0] = 1;
 	ir[4000] = 0.8;
 	const rp = { mix: 1 };
-	const r = makeProc('pp-reverb', rp);
+	const r = makeProc('reverb', rp);
 	r.proc.port.onmessage({ data: { type: 'ir', channels: [ir, ir] } });
 	const imp = impulse(BLOCK * 2);
 	for (let b = 0; b < 2; b++) r.run(imp.subarray(b * BLOCK, (b + 1) * BLOCK));
@@ -1057,28 +1057,36 @@ console.log('\nstopped source (empty input) => tails ring');
 	check('conv reverb tail keeps sounding after input stops', maxIdx(rtail).m > 0.2, `peak=${maxIdx(rtail).m.toFixed(4)}`);
 }
 
-// -- pp-loopfade (audio-thread loop clock + anti-click fade) ---------------
-console.log('\npp-loopfade');
+// -- channel (audio-thread loop clock + anti-click fade + elapsed) -------
+console.log('\nchannel');
 {
-	const proc = new registered['pp-loopfade']();
-	const events = [];
-	proc.port.postMessage = (m) => {
-		if (m && m.type === 'loopend') events.push(m);
-	};
-	const LOOP = 0.1; // 4410 samples at 44100
-	let frame = 0;
-	const run = (blocks) => {
-		const out = [];
-		for (let b = 0; b < blocks; b++) {
-			globalThis.currentTime = frame / SR;
-			const inL = new Float32Array(BLOCK).fill(1);
-			const outL = new Float32Array(BLOCK);
-			const outR = new Float32Array(BLOCK);
-			proc.process([[inL, inL], []], [[outL, outR], []], {});
-			out.push(outL);
-			frame += BLOCK;
-		}
-		return out;
+	const make = () => {
+		const proc = new registered['channel']();
+		const msgs = [];
+		proc.port.postMessage = (m) => {
+			if (m && (m.type === 'loopend' || m.type === 'elapsed')) msgs.push(m);
+		};
+		let frame = 0;
+		const run = (blocks) => {
+			const out = [];
+			for (let b = 0; b < blocks; b++) {
+				globalThis.currentTime = frame / SR;
+				const inL = new Float32Array(BLOCK).fill(1);
+				const outL = new Float32Array(BLOCK);
+				const outR = new Float32Array(BLOCK);
+				proc.process([[inL, inL], []], [[outL, outR], []], {});
+				out.push(outL);
+				frame += BLOCK;
+			}
+			return out;
+		};
+		return {
+			proc,
+			msgs,
+			run,
+			loops: () => msgs.filter((m) => m.type === 'loopend'),
+			els: () => msgs.filter((m) => m.type === 'elapsed'),
+		};
 	};
 	const sample = (blocks, i) => blocks[Math.floor(i / BLOCK)][i % BLOCK];
 	const near = (blocks, c) => {
@@ -1087,24 +1095,70 @@ console.log('\npp-loopfade');
 		return m;
 	};
 
-	// start playing from loopStart
-	proc.port.onmessage({
-		data: { type: 'start', startTime: 0, startPos: 0, loopStart: 0, loopEnd: LOOP, rate: 1, fadeDur: 0.006 },
+	// looping: anti-click fade + wrap pulse + wrapped elapsed
+	const LOOP = 0.1; // 4410 samples at 44100
+	const a = make();
+	a.proc.port.onmessage({
+		data: {
+			type: 'start',
+			startTime: 0,
+			startPos: 0,
+			loop: true,
+			loopStart: 0,
+			loopEnd: LOOP,
+			rate: 1,
+			fadeDur: 0.006,
+			elapsed: true,
+			elapsedPeriod: 0.01,
+		},
 	});
-	const blocks = run(Math.ceil((SR * 0.25) / BLOCK)); // ~0.25s => 2 wraps
-	check('loopend fires once per loop length', events.length === 2, `events=${events.length}`);
+	const blocks = a.run(Math.ceil((SR * 0.25) / BLOCK)); // ~0.25s => 2 wraps
+	check('loopend fires once per loop length', a.loops().length === 2, `events=${a.loops().length}`);
 	check('intro fade starts at ~0', Math.abs(sample(blocks, 0)) < 0.02, `s0=${sample(blocks, 0)}`);
 	check('gain reaches ~1 after the intro', Math.abs(sample(blocks, 1000) - 1) < 0.02, `s=${sample(blocks, 1000)}`);
 	check('fades to ~0 at the first wrap', near(blocks, 4410) < 0.05, `min=${near(blocks, 4410).toFixed(3)}`);
 	check('fades to ~0 at the second wrap', near(blocks, 8820) < 0.05, `min=${near(blocks, 8820).toFixed(3)}`);
 	check('passes through away from the wrap', Math.abs(sample(blocks, 6000) - 1) < 0.02, `s=${sample(blocks, 6000)}`);
+	const els = a.els();
+	check('elapsed reported while looping', els.length >= 15, `n=${els.length}`);
+	check(
+		'elapsed wrapped inside the loop',
+		els.every((m) => m.value >= 0 && m.value <= LOOP + 1e-6),
+		`max=${els.length ? Math.max(...els.map((m) => m.value)).toFixed(3) : 'n/a'}`,
+	);
+	let wrapped = false;
+	for (let i = 1; i < els.length; i++) if (els[i].value < els[i - 1].value - LOOP / 2) wrapped = true;
+	check('elapsed wraps at the loop boundary', wrapped);
 
 	// stop: no more events, gain released back to unity
-	proc.port.onmessage({ data: { type: 'stop' } });
-	const before = events.length;
-	const after = run(80);
-	check('loopend stops after stop', events.length === before, `events=${events.length}`);
+	a.proc.port.onmessage({ data: { type: 'stop' } });
+	const before = a.msgs.length;
+	const after = a.run(80);
+	check('events stop after stop', a.msgs.length === before, `n=${a.msgs.length}`);
 	check('gain released to unity after stop', Math.abs(after[40][0] - 1) < 0.02, `g=${after[40][0]}`);
+
+	// non-looping, rate-scaled elapsed, no wrap pulse
+	const b = make();
+	b.proc.port.onmessage({
+		data: {
+			type: 'start',
+			startTime: 0,
+			startPos: 0,
+			loop: false,
+			loopStart: 0,
+			loopEnd: 0,
+			rate: 2,
+			fadeDur: 0.006,
+			elapsed: true,
+			elapsedPeriod: 0.01,
+		},
+	});
+	b.run(40);
+	const bel = b.els();
+	check('non-looping reports elapsed', bel.length >= 3, `n=${bel.length}`);
+	check('no loopend when not looping', b.loops().length === 0, `n=${b.loops().length}`);
+	const last = bel[bel.length - 1];
+	check('elapsed is rate-scaled', !!last && last.value > 0.1, `v=${last ? last.value.toFixed(3) : 'n/a'}`);
 }
 
 console.log('\n' + (failures === 0 ? 'ALL DSP CHECKS PASSED' : failures + ' CHECKS FAILED'));

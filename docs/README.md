@@ -1,7 +1,7 @@
 # audio-engine
 
-The **PurplePurples** audio engine: a Web Audio sampler / sequencer / mixer with
-no React dependency, extracted from the `purplepurples` app so it can be
+The **audio-engine** package: a Web Audio sampler / sequencer / mixer with
+no React dependency, extracted from the app so it can be
 versioned and consumed as a package.
 
 ```ts
@@ -19,7 +19,7 @@ The package ships **TypeScript source**; the consumer transpiles it (Next.js:
 | --- | --- |
 | [Events reference](./events.md) | every engine / master / sound event and its payload |
 | [Effects](./effects.md) | the 19-effect catalog with parameters and ranges |
-| [Models & presets](./models-and-presets.md) | `.purple.zip` format, index.json, preset slots |
+| [Models & presets](./models-and-presets.md) | `.zip` format, index.json, preset slots |
 | [Development](./development.md) | typecheck, tests, worklet generation, docs |
 | [API reference](./api/index.html) | generated TypeDoc site (classes, methods, types) |
 
@@ -116,7 +116,7 @@ master gain, the grid of sounds and a set of focused helpers:
 ```
 AudioEngine (src/audioengine.ts)
 ├── Master (src/master.ts)              transport: play/stop/pause/mute/loop/volume
-├── ModelManager (src/model.ts)         .purple.zip + preset I/O
+├── ModelManager (src/model.ts)         .zip + preset I/O
 ├── Automation (src/automation.ts)      record & loop engine parameter changes (R/L)
 ├── Sound (src/sound.ts) × N            one sampler cell: source → effects → panner
 │   └── Effect (src/effects/core.ts) × N   AudioWorklet-backed processors

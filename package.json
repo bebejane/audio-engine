@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
-	"description": "PurplePurples audio engine — Web Audio sampler / sequencer / mixer (no React).",
+	"description": "audio-engine — Web Audio sampler / sequencer / mixer (no React).",
 	"license": "AGPL-3.0-or-later",
 	"exports": {
 		".": "./src/index.ts",
@@ -14,6 +14,10 @@
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"test": "node tests/verify-effects.mjs",
+		"test:stress": "node --import ./tests/register-ts.mjs tests/stress-engine.mjs",
+		"test:stress:heavy": "node --import ./tests/register-ts.mjs tests/stress-engine.mjs --heavy",
+		"stress:browser": "node tests/browser/build.mjs && node tests/browser/serve.mjs",
+		"stress:browser:build": "node tests/browser/build.mjs",
 		"docs:api": "typedoc && pnpx serve ./docs/api",
 		"worklet:gen": "node scripts/build-effects-worklet.mjs",
 		"worklet:check": "node scripts/build-effects-worklet.mjs --check",

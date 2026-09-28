@@ -5,12 +5,12 @@ import { createWorkletEffectNode } from '../worklet'
 /**
  * Reverb (simple-reverb style): generates a decaying noise impulse response on
  * the main thread (so Math.random + the time/decay/reverse math stay as
- * before) and ships it to the pp-reverb worklet, which runs a uniform
+ * before) and ships it to the reverb worklet, which runs a uniform
  * partitioned overlap-save convolution. Rebuilding the impulse replaces the
  * internal state, like the old ConvolverNode swap.
  */
 export default class Reverb extends Effect {
-	/** Build the effect: create the pp-reverb worklet node and its initial IR. */
+	/** Build the effect: create the reverb worklet node and its initial IR. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			mix: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Mix' },
@@ -20,7 +20,7 @@ export default class Reverb extends Effect {
 		}
 		super(context, options, defaults)
 		const init = this.collectInit()
-		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(context, 'pp-reverb', {
+		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(context, 'reverb', {
 			mix: init.mix,
 		})
 		this.initParams()

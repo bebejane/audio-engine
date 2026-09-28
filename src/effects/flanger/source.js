@@ -1,4 +1,4 @@
-class PPFlangerProcessor extends AudioWorkletProcessor {
+class FlangerProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		var maxSamp = Math.ceil(sampleRate * 0.05);
@@ -37,5 +37,5 @@ class PPFlangerProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPFlangerProcessor.parameterDescriptors = ppDesc([['time', 0.45, 0, 1], ['speed', 0.2, 0, 1], ['depth', 0.1, 0, 1], ['feedback', 0.5, 0, 1], ['mix', 0.5, 0, 1]]);
-registerProcessor('pp-flanger', PPFlangerProcessor);
+FlangerProcessor.parameterDescriptors = ppDesc([['time', 0.45, 0, 1], ['speed', 0.2, 0, 1], ['depth', 0.1, 0, 1], ['feedback', 0.5, 0, 1], ['mix', 0.5, 0, 1]]);
+registerProcessor('flanger', FlangerProcessor);

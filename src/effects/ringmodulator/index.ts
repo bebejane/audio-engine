@@ -5,10 +5,10 @@ import { createWorkletEffectNode } from '../worklet'
 /**
  * Ring modulator (BBC design): carrier oscillator through diode saturation,
  * summed with the audio, compressed, gain x3. DSP (LFO, diode curves,
- * internal compressor) runs in the pp-ringmodulator worklet.
+ * internal compressor) runs in the ringmodulator worklet.
  */
 export default class RingModulator extends Effect {
-	/** Build the effect: create the pp-ringmodulator worklet node and apply options. */
+	/** Build the effect: create the ringmodulator worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			speed: { value: 30, max: 2000, min: 0, type: 'float', name: 'Speed' },
@@ -18,7 +18,7 @@ export default class RingModulator extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-ringmodulator',
+			'ringmodulator',
 			this.collectInit(),
 		)
 		this.initParams()

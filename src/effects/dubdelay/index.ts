@@ -4,10 +4,10 @@ import { createWorkletEffectNode } from '../worklet'
 
 /**
  * Dub delay — feedback through a lowpass, input also folding into the wet
- * mix, exactly like the original node graph. DSP in pp-dubdelay worklet.
+ * mix, exactly like the original node graph. DSP in dubdelay worklet.
  */
 export default class DubDelay extends Effect {
-	/** Build the effect: create the pp-dubdelay worklet node and apply options. */
+	/** Build the effect: create the dubdelay worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			feedback: { value: 0.6, max: 1, min: 0, type: 'float', name: 'Feedback' },
@@ -18,7 +18,7 @@ export default class DubDelay extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-dubdelay',
+			'dubdelay',
 			this.collectInit(),
 		)
 		this.initParams()

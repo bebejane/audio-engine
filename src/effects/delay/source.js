@@ -1,4 +1,4 @@
-class PPDelayProcessor extends AudioWorkletProcessor {
+class DelayProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		var maxSamp = Math.ceil(sampleRate * 2);
@@ -25,5 +25,5 @@ class PPDelayProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPDelayProcessor.parameterDescriptors = ppDesc([['feedback', 0.5, 0, 1], ['time', 0.1, 0, 2], ['mix', 0.5, 0, 1]]);
-registerProcessor('pp-delay', PPDelayProcessor);
+DelayProcessor.parameterDescriptors = ppDesc([['feedback', 0.5, 0, 1], ['time', 0.1, 0, 2], ['mix', 0.5, 0, 1]]);
+registerProcessor('delay', DelayProcessor);

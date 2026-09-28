@@ -1,8 +1,8 @@
 /**
  * Effects AudioWorklet loader.
  *
- * `ensureEffectsWorklet` registers every effect processor (pp-delay,
- * pp-flanger, …) on a given AudioContext once, via a Blob URL — the same
+ * `ensureEffectsWorklet` registers every effect processor (delay,
+ * flanger, …) on a given AudioContext once, via a Blob URL — the same
  * delivery trick the recorder worklet uses (audioWorklet.addModule requires a
  * JS MIME type). Effect classes then get an AudioWorkletNode per instance.
  */

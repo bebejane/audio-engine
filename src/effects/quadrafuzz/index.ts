@@ -5,10 +5,10 @@ import { createWorkletEffectNode } from '../worklet'
 /**
  * QuadraFuzz — 4-band crossover (147/587/2490/4980 Hz) feeding the same
  * distortion curve as the original, summed over the input. DSP in the
- * pp-quadrafuzz worklet.
+ * quadrafuzz worklet.
  */
 export default class Quadrafuzz extends Effect {
-	/** Build the effect: create the pp-quadrafuzz worklet node and apply options. */
+	/** Build the effect: create the quadrafuzz worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			lowGain: { value: 0.6, max: 1, min: 0, type: 'float', name: 'Low Gain' },
@@ -19,7 +19,7 @@ export default class Quadrafuzz extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-quadrafuzz',
+			'quadrafuzz',
 			this.collectInit(),
 		)
 		this.initParams()

@@ -1,4 +1,4 @@
-class PPDistortionProcessor extends AudioWorkletProcessor {
+class DistortionProcessor extends AudioWorkletProcessor {
 	process(inputs, outputs, parameters) {
 		var s = ppSetupStereo(inputs, outputs);
 		if (!s) return true;
@@ -11,5 +11,5 @@ class PPDistortionProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPDistortionProcessor.parameterDescriptors = ppDesc([['gain', 0.5, 0, 1]]);
-registerProcessor('pp-distortion', PPDistortionProcessor);
+DistortionProcessor.parameterDescriptors = ppDesc([['gain', 0.5, 0, 1]]);
+registerProcessor('distortion', DistortionProcessor);

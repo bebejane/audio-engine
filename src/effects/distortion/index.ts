@@ -4,10 +4,10 @@ import { createWorkletEffectNode } from '../worklet'
 
 /**
  * Distortion (wave-shaper). The exact per-sample curve from the original
- * `adjustGain`/StackOverflow waveshaper runs in the pp-distortion worklet.
+ * `adjustGain`/StackOverflow waveshaper runs in the distortion worklet.
  */
 export default class Distortion extends Effect {
-	/** Build the effect: create the pp-distortion worklet node and apply options. */
+	/** Build the effect: create the distortion worklet node and apply options. */
 	constructor(context: AudioContext, options: Record<string, any> = {}) {
 		const defaults: EffectDefaults = {
 			gain: { value: 0.5, max: 1, min: 0, type: 'float', name: 'Gain' },
@@ -15,7 +15,7 @@ export default class Distortion extends Effect {
 		super(context, options, defaults)
 		this.inputNode = this.outputNode = this.node = createWorkletEffectNode(
 			context,
-			'pp-distortion',
+			'distortion',
 			this.collectInit(),
 		)
 		this.initParams()

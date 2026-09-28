@@ -831,7 +831,7 @@ function ppMagneticTapeState(sr) {
 	return { configure: configure, processSample: processSample, out: out };
 }
 
-class PPMagneticTapeProcessor extends AudioWorkletProcessor {
+class MagneticTapeProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		this.st = ppMagneticTapeState(sampleRate);
@@ -857,7 +857,7 @@ class PPMagneticTapeProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PPMagneticTapeProcessor.parameterDescriptors = ppDesc([
+MagneticTapeProcessor.parameterDescriptors = ppDesc([
 	['inputDrive', 0.5, 0, 1],
 	['outputLevel', 0.5, 0, 1],
 	['shame', 0, 0, 1],
@@ -866,4 +866,4 @@ PPMagneticTapeProcessor.parameterDescriptors = ppDesc([
 	['mix', 1, 0, 1],
 	['flange', 0, 0, 1],
 ]);
-registerProcessor('pp-magnetictape', PPMagneticTapeProcessor);
+registerProcessor('magnetictape', MagneticTapeProcessor);
