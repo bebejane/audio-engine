@@ -99,6 +99,28 @@ await phase('construct', async () => {
 	defaults.destroy(true);
 });
 
+// 0. empty model: replace()/sample() must work on cells with no Sound yet ----
+await phase('empty-model upload/record', async () => {
+	const e = new AudioEngine({ sampleRate: 44100, preloadPitch: false });
+	e.replace('0-0', '/audio/drop.wav', 'drop.wav');
+	await tick(5);
+	const item = e.soundMap['0-0'];
+	check('replace() creates a sound for an empty cell', !!item, 'missing');
+	check('replace() loads the new sound', !!item && item.sound._loaded, `loaded=${item ? item.sound._loaded : 'n/a'}`);
+	// cancel/sample on an unknown id must not throw (empty cells have no Sound)
+	let threw = false;
+	try {
+		e.cancelSample('9-9');
+	} catch {
+		threw = true;
+	}
+	check('cancelSample() tolerates an unknown id', !threw);
+	let sampleErr = null;
+	await Promise.resolve(e.sample('3-3', true)).catch((err) => (sampleErr = err));
+	check('sample() rejects cleanly when there is no input', sampleErr !== null, `err=${sampleErr}`);
+	e.destroy(true);
+});
+
 // 1. many sounds -----------------------------------------------------------
 await phase('add sounds', async () => {
 	for (let i = 0; i < COLUMNS; i++) {

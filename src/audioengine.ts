@@ -218,9 +218,12 @@ class AudioEngine extends EventEmitter {
 		// without waiting for a lazy module load.
 		ensureEffectsWorklet(this.context);
 
-		// Warm the pitch shifter once per engine when preloading is enabled, so
-		// each Sound's eager node creation finds the module already loaded
-		// (headless has no window — the rejection is ignored).
+		// Warm the pitch shifter MODULE once per engine when preloading is
+		// enabled — so a sound's first pitch change doesn't pay the dynamic
+		// module fetch/parse. Per-sound Stretch nodes stay lazy: creating one
+		// per Sound up front garbles audio on some setups (many concurrent
+		// WASM worklet instances). Headless has no window; the rejection is
+		// ignored.
 		if (this.preloadPitch) {
 			import('./pitch/stretch')
 				.then(({ default: loadSignalsmithStretch }) => loadSignalsmithStretch())
@@ -546,7 +549,6 @@ class AudioEngine extends EventEmitter {
 			local: this.electron,
 			enableLoops: this.enableLoops,
 			enableElapsed: this.enableElapsed,
-			preloadPitch: this.preloadPitch,
 			...opt,
 		});
 		// Sound.emitState only ever emits 'state' (never 'state<id>'), so this is
@@ -681,8 +683,10 @@ class AudioEngine extends EventEmitter {
 		this.unload(id);
 		const has = this.sounds.some((i) => i.id === id);
 		if (!has) {
-			// uploading into a column that has no sound yet → create it
-			this.add(id, url, filename);
+			// uploading into a column that has no sound yet (e.g. a freshly
+			// created empty model) → create it AND load it, otherwise the buffer
+			// is never decoded and the cell stays silent
+			this.add(id, url, filename).sound.load();
 			return;
 		}
 		const sounds = this.sounds.map((i, idx) => {
@@ -1176,10 +1180,13 @@ class AudioEngine extends EventEmitter {
 		if (!start) return this.sampleRecorder.stop();
 
 		this.stop(id);
+		// a cell can exist with no Sound yet (a new/empty model) — create one so
+		// the take has somewhere to land (replace() rebuilds it with the audio)
+		if (!this._sound(id)) this.add(id, null, 'sample-' + id + '.wav');
 		return this.sampleRecorder
 			.record(this.inputStreamSource, id)
 			.then((recording: { url: string; filename: string }) => {
-				const sound = this.get(id) ? this.get(id).sound : null;
+				const sound = this._sound(id);
 				if (!sound) return console.error('NO SOUND there anymore', id);
 
 				this.replace(id, recording.url, recording.filename);
@@ -1195,7 +1202,8 @@ class AudioEngine extends EventEmitter {
 		this.sampleRecorder.cancel();
 		this.sampling = false;
 		this.emit('sampling', id, false);
-		if (this.get(id).sound) this.get(id).sound.sampling(false);
+		const sound = this._sound(id);
+		if (sound) sound.sampling(false);
 		this.emitMasterState({
 			sampling: false,
 		});

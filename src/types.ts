@@ -58,11 +58,11 @@ export interface AudioEngineOptions {
 	/** Track playback elapsed time per sound. */
 	enableElapsed?: boolean;
 	/**
-	 * Warm the Signalsmith Stretch pitch shifter at startup: load its module and
-	 * pre-create the per-sound node, so the first pitch change doesn't pay the
-	 * dynamic module load. The node is still only connected while pitch ≠ 0, so
-	 * there is no latency/CPU cost until a sound is actually pitched. Defaults to
-	 * true; set false for many-voice / headless workloads that never pitch.
+	 * Warm the Signalsmith Stretch pitch-shifter module at engine startup so a
+	 * sound's first pitch change doesn't pay the dynamic module fetch/parse.
+	 * Per-sound Stretch nodes are still created lazily on first use (eagerly
+	 * instantiating one per sound garbles audio on some setups). Defaults to
+	 * true; set false to skip the warm-up entirely.
 	 */
 	preloadPitch?: boolean;
 	/** Trim/normalize recorded samples; `false` disables processing. */

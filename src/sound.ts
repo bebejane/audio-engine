@@ -183,8 +183,6 @@ class Sound extends EventEmitter {
 	_pitchActive: boolean;
 	_stretch: StretchLike | null;
 	_pitchPending: boolean;
-	/** Create the pitch node eagerly at construction (trades memory for no first-use load). */
-	_preloadPitch: boolean;
 	_loopFadeDur: number;
 	_channelNode: AudioWorkletNode | null;
 	_channelNodePending: boolean;
@@ -299,12 +297,10 @@ class Sound extends EventEmitter {
 		this._pitchActive = Math.abs(this._pitch || 0) > 0.01;
 		this._stretch = null;
 		this._pitchPending = false;
-		this._preloadPitch = !!opt.preloadPitch;
-		// eagerly create the pitch node when preloading, so the first pitch
-		// change doesn't pay the shifter module load / node construction. The
-		// node is still only connected while pitch ≠ 0 (see _connectChain), so
-		// there is no latency/CPU cost until the sound is actually pitched.
-		if (this._preloadPitch) this._ensurePitchNode();
+		// NB: the Signalsmith node is NOT created here even when the engine
+		// preloads pitch — creating a Stretch node per Sound up front garbles
+		// audio on some setups. `preloadPitch` only warms the module (once, in
+		// AudioEngine); the per-sound node stays lazy, created on first use.
 		this.onEnded = this.onEnded.bind(this);
 	}
 	/**
