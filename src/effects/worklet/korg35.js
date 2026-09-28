@@ -13,7 +13,7 @@
 //   * Q = 0.707 gives K = 0 (no resonance); the range is 0.5 .. 10
 //
 // mode: 'lpf' (low pass) or 'hpf' (high pass)
-function ppKorg35State(mode) {
+function korg35State(mode) {
 	var isHpf = mode === 'hpf' ? 1 : 0;
 	var srClamped = Math.min(192000, Math.max(1, sampleRate));
 	var kCut = 44.1 / srClamped;      // cutoff smoother pole (Faust fConst1)
@@ -54,20 +54,20 @@ function ppKorg35State(mode) {
 }
 
 // Both filters run the (mono) Faust recursion once per channel.
-function ppKorg35Processor(mode) {
+function korg35Processor(mode) {
 	return class extends AudioWorkletProcessor {
 		constructor() {
 			super();
-			this.fL = ppKorg35State(mode);
-			this.fR = ppKorg35State(mode);
+			this.fL = korg35State(mode);
+			this.fR = korg35State(mode);
 		}
 		process(inputs, outputs, parameters) {
-			var s = ppSetupStereo(inputs, outputs);
+			var s = setupStereo(inputs, outputs);
 			if (!s) return true;
-			var q = ppv(parameters.q, 0);
+			var q = paramAt(parameters.q, 0);
 			var i;
 			for (i = 0; i < s.n; i++) {
-				var co = ppv(parameters.cutoff, i);
+				var co = paramAt(parameters.cutoff, i);
 				s.outL[i] = this.fL(s.inL[i], co, q);
 				if (s.outR) s.outR[i] = this.fR(s.inR[i], co, q);
 			}

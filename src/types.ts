@@ -41,6 +41,25 @@ export interface ProcessSampleOptions {
 	fade?: boolean;
 }
 
+/** Biquad shapes a channel-EQ band can take. */
+export type EqBandType = 'lowshelf' | 'peaking' | 'highshelf' | 'lowpass' | 'highpass';
+
+/** One band of a sound's 4-band channel EQ (engine.eq / AudioEngine.eq). */
+export interface EqBand {
+	/** Bypass the band (flat) when false. */
+	on: boolean;
+	type: EqBandType;
+	/** Center/corner frequency in Hz (20–20000). */
+	frequency: number;
+	/** Boost/cut in dB (±18; ignored by lowpass/highpass). */
+	gain: number;
+	/** Filter Q / bandwidth (0.1–10). */
+	q: number;
+}
+
+/** Partial update for one EQ band. */
+export type EqBandOptions = Partial<EqBand>;
+
 /** Options accepted by the AudioEngine constructor (see Studio). */
 export interface AudioEngineOptions {
 	/** AudioContext sample rate; omit to use the device default. */
@@ -197,6 +216,7 @@ export interface SoundLike {
 		play(opt?: Record<string, unknown>): void;
 		stop(): void;
 		volume(v?: number): Any;
+		eq(band?: number, options?: EqBandOptions): EqBand | EqBand[] | undefined;
 		on(event: string, listener: Any): Any;
 		off(event: string, listener: Any): Any;
 		destroy(): void;
@@ -278,6 +298,11 @@ export interface AudioEngine extends AudioEngineEvents {
 	rate(id: string, rate: number): void;
 	/** Tempo-preserving pitch shift, in semitones (0 = original, ±24 = ±2 octaves). */
 	pitch(id: string, pitch: number): void;
+	/**
+	 * 4-band channel EQ (applied in the channel processor, after the effects):
+	 * `eq(id)` → all four bands, `eq(id, band)` → one band, `eq(id, band, opts)` → set.
+	 */
+	eq(id: string, band?: number, options?: EqBandOptions): EqBand | EqBand[] | undefined;
 	loop(id: string, on: boolean, offset?: Record<string, number>): Any;
 	effectBypass(id: string, idx: number | string, on: boolean): Any;
 	/** With no `idx` returns the whole chain (Sound._currentEffectParams()). */
@@ -375,6 +400,8 @@ export interface SoundSettings {
 	pause?: boolean;
 	reversed?: boolean;
 	effectsEnabled?: boolean;
+	/** 4-band channel EQ; absent → flat. */
+	eq?: EqBand[];
 	effects?: EffectSnapshot[];
 }
 

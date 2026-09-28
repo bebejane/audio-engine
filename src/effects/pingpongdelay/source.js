@@ -1,19 +1,19 @@
 class PingPongProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
-		this.dlyA = ppDelayLine(Math.ceil(sampleRate * 2));
-		this.dlyB = ppDelayLine(Math.ceil(sampleRate * 2));
+		this.dlyA = delayLine(Math.ceil(sampleRate * 2));
+		this.dlyB = delayLine(Math.ceil(sampleRate * 2));
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
-		var fb = ppv(parameters.feedback, 0);
-		var mix = ppv(parameters.mix, 0);
-		var levels = ppMixLevels(mix);
+		var fb = paramAt(parameters.feedback, 0);
+		var mix = paramAt(parameters.mix, 0);
+		var levels = mixLevels(mix);
 		var maxDelay = this.dlyA.size - 2;
 		var i;
 		for (i = 0; i < s.n; i++) {
-			var tSamp = Math.max(0, Math.min(maxDelay, ppv(parameters.time, i) * sampleRate));
+			var tSamp = Math.max(0, Math.min(maxDelay, paramAt(parameters.time, i) * sampleRate));
 			// single mono chain (like the native mono node graph): the input is
 			// downmixed, fed into line A, whose output feeds line B (the ping-pong)
 			var m = (s.inL[i] + s.inR[i]) * 0.5;
@@ -27,5 +27,5 @@ class PingPongProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-PingPongProcessor.parameterDescriptors = ppDesc([['feedback', 0.5, 0, 1], ['time', 0.3, 0, 2], ['mix', 0.5, 0, 1]]);
+PingPongProcessor.parameterDescriptors = desc([['feedback', 0.5, 0, 1], ['time', 0.3, 0, 2], ['mix', 0.5, 0, 1]]);
 registerProcessor('pingpongdelay', PingPongProcessor);

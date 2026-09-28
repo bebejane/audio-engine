@@ -38,14 +38,14 @@
 //     four hold identical data and `waveformIndx` is pinned to 0, so the
 //     interpolation between them is a no-op — the output is bit-identical.
 
-var PP_MTE_PI = 3.14159265359;
+var MTE_PI = 3.14159265359;
 
 // ------------------------------------------------------- helpers --
 
 // juce::Random (setSeedRandomly / nextFloat / nextBool) replacement. A fixed
 // seed is more useful than a random one: the same effect instance degrades the
 // same way every time, and the offline harness can assert on it.
-function ppMteRng(seed) {
+function mteRng(seed) {
 	var s = (seed >>> 0) || 0x1a2b3c4d;
 	function nextUint() {
 		s ^= s << 13; s >>>= 0;
@@ -59,7 +59,7 @@ function ppMteRng(seed) {
 	};
 }
 
-function ppMteClamp01(v) {
+function mteClamp01(v) {
 	return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
@@ -67,13 +67,13 @@ function ppMteClamp01(v) {
 // spectrum with one-pole filters; `pink` selects a -3 dB/oct slope (Paul
 // Kellett's approximation) instead of white. The hiss gets a highpass because
 // real tape hiss has no rumble in it.
-function ppMteNoise(sr, seconds, seed, lpHz, hpHz, pink) {
+function mteNoise(sr, seconds, seed, lpHz, hpHz, pink) {
 	var n = Math.max(64, Math.round(seconds * sr));
 	var buf = new Float32Array(n);
-	var rng = ppMteRng(seed);
+	var rng = mteRng(seed);
 	var b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-	var lpCoef = lpHz > 0 ? 1 - Math.exp(-2 * PP_MTE_PI * lpHz / sr) : 0;
-	var hpCoef = hpHz > 0 ? Math.exp(-2 * PP_MTE_PI * hpHz / sr) : 0;
+	var lpCoef = lpHz > 0 ? 1 - Math.exp(-2 * MTE_PI * lpHz / sr) : 0;
+	var hpCoef = hpHz > 0 ? Math.exp(-2 * MTE_PI * hpHz / sr) : 0;
 	var lp = 0, hpY = 0, hpX = 0;
 	for (var i = 0; i < n; i++) {
 		var w = rng.nextFloat() * 2 - 1;
@@ -106,7 +106,7 @@ function ppMteNoise(sr, seconds, seed, lpHz, hpHz, pink) {
 // harmonics from the even one tanh(0.272|x|), and the two are summed 1 : 0.3.
 // The mix can never exceed unity in magnitude (tanh is bounded and the weights
 // sum to one), so no output clamp is needed.
-function ppMteInputSaturation(sr) {
+function mteInputSaturation(sr) {
 	var satThreshold = 0;
 	var satRateOdd = 2.0;
 	var satRateEven = 0.272;
@@ -120,7 +120,7 @@ function ppMteInputSaturation(sr) {
 	var priorSample = [0, 0];
 
 	// setFrequencyRolloff(4000)
-	coef = 4000 * 2 * PP_MTE_PI / sr;
+	coef = 4000 * 2 * MTE_PI / sr;
 	if (coef > 1) coef = 1; else if (coef < 0) coef = 0;
 
 	function process(x, channel) {
@@ -150,15 +150,15 @@ function ppMteInputSaturation(sr) {
 // Second-order Butterworth, direct form I, one instance per channel. The
 // upstream class also carries a "modified biquad" path (c0/d0) that no setter
 // in this plug-in ever enables, so it is not ported.
-function ppMteButterworth(sr) {
+function mteButterworth(sr) {
 	var a0 = 0, a1 = 0, a2 = 0, b1 = 0, b2 = 0;
 	var priorIn2 = [0, 0], priorIn1 = [0, 0], curIn = [0, 0];
 	var priorOut2 = [0, 0], priorOut1 = [0, 0], curOut = [0, 0];
 	var sqrt2 = 1.41421356237309504880168872420969808;
 
 	function setLowHighPass(fc, isLowPass) {
-		var theta = fc * PP_MTE_PI / sr;
-		if (theta >= 0.49 * PP_MTE_PI) theta = 0.49 * PP_MTE_PI;
+		var theta = fc * MTE_PI / sr;
+		if (theta >= 0.49 * MTE_PI) theta = 0.49 * MTE_PI;
 		var C, CC;
 		if (isLowPass) {
 			C = 1 / Math.tan(theta);
@@ -211,7 +211,7 @@ function ppMteButterworth(sr) {
 // from its time constant: upstream nudges `curDepth` toward the target by a
 // fixed 0.001 per sample, which is a ~22.7 ms time constant at 44.1 kHz and
 // gets twice as slow in ms at 88.2 kHz if you take the constant literally.
-function ppMteFlange(sr) {
+function mteFlange(sr) {
 	var scale = sr / 44100;
 	var SIZE = Math.max(16, Math.round(2000 * scale));
 	var bufL = new Float32Array(SIZE);
@@ -258,7 +258,7 @@ function ppMteFlange(sr) {
 // Envelope generator with linear segments, looping. Upstream stores the domain
 // and loop length in samples as `ms * 44.1`; here they come from the real
 // sample rate, which is the same number at 44.1 kHz and correct everywhere else.
-function ppMteEnvelope(points, domainMs, loopMs, sr) {
+function mteEnvelope(points, domainMs, loopMs, sr) {
 	var incr = 0;
 	var domain = Math.max(1, Math.round(domainMs * sr / 1000));
 	var loopDuration = Math.max(1, Math.round(loopMs * sr / 1000));
@@ -296,8 +296,8 @@ function ppMteEnvelope(points, domainMs, loopMs, sr) {
 // Random envelope that only ever dips, from 1.0 down by up to
 // `dynamicExtremity`. The dip points are regenerated every time the domain
 // wraps, so the level keeps wandering instead of looping audibly.
-function ppMteEnvelopeDips(domainMs, dynamicExtremity, numPoints, numPointRandomness, sr) {
-	var rng = ppMteRng(0x5f3759df);
+function mteEnvelopeDips(domainMs, dynamicExtremity, numPoints, numPointRandomness, sr) {
+	var rng = mteRng(0x5f3759df);
 	var incr = 0;
 	var domain = Math.max(1, Math.round(domainMs * sr / 1000));
 	var points = [];
@@ -354,9 +354,9 @@ function ppMteEnvelopeDips(domainMs, dynamicExtremity, numPoints, numPointRandom
 // the start of the wav and out at the end; to hide that, the buffer is read at
 // two positions half a loop apart and crossfaded with a triangle ramp, which
 // makes the loop period inaudible. Same trick, same arithmetic, but the
-// buffer is synthesised (see ppMteNoise) rather than loaded.
-function ppMteHiss(sr) {
-	var buf = ppMteNoise(sr, 2.0, 0x2545f491, 0, 60, false);
+// buffer is synthesised (see mteNoise) rather than loaded.
+function mteHiss(sr) {
+	var buf = mteNoise(sr, 2.0, 0x2545f491, 0, 60, false);
 	var len = buf.length;
 	var half = len >> 1;
 	var indx1 = 0;
@@ -386,8 +386,8 @@ function ppMteHiss(sr) {
 //
 // The same seamless-loop reader, but as a single-channel source: this is the
 // pre-recorded low-frequency grain noise mixed in by the age macro.
-function ppMteLoopCrossfade(sr) {
-	var buf = ppMteNoise(sr, 2.0, 0x9e3779b1, 120, 0, false);
+function mteLoopCrossfade(sr) {
+	var buf = mteNoise(sr, 2.0, 0x9e3779b1, 120, 0, false);
 	var len = buf.length;
 	var half = len >> 1;
 	var indx1 = 0;
@@ -419,8 +419,8 @@ function ppMteLoopCrossfade(sr) {
 // The upstream copy hardcodes SAMPLE_RATE 44100; the real rate is used here.
 // `gain_` is computed but never applied in STK's tick() either, and is
 // likewise unused.
-function ppMteGranulate(audioData, nVoices, sampleRate) {
-	var rng = ppMteRng(0xc2b2ae35);
+function mteGranulate(audioData, nVoices, sampleRate) {
+	var rng = mteRng(0xc2b2ae35);
 	var GRAIN_STOPPED = 0, GRAIN_FADEIN = 1, GRAIN_SUSTAIN = 2, GRAIN_FADEOUT = 3;
 	var gDuration = 30, gRampPercent = 50, gDelay = 0, gOffset = 0;
 	var gStretch = 0, stretchCounter = 0, gRandomFactor = 0.097;
@@ -597,37 +597,37 @@ function ppMteGranulate(audioData, nVoices, sampleRate) {
 //   * a random envelope only ever dips, ducking the signal
 //   * above age 0.5, periodic bursts of white noise
 //   * a bed of low-frequency granular noise mixed under everything
-function ppMteHurricaneSandy(sr) {
-	var rng = ppMteRng(0x27d4eb2d);
+function mteHurricaneSandy(sr) {
+	var rng = mteRng(0x27d4eb2d);
 	var grainImpact = 0, lowFreqGrainNoiseLevel = 0, ampFluctuationImpact = 0, noiseBurstImpact = 0;
 
-	var dips = ppMteEnvelopeDips(1000, 0.5, 15, 0.5, sr);
+	var dips = mteEnvelopeDips(1000, 0.5, 15, 0.5, sr);
 	// used to mix the noise burst in
-	var noiseEnv = ppMteEnvelope([
+	var noiseEnv = mteEnvelope([
 		[0, 0], [0.143, 0.073], [0.305, 0.367], [0.383, 0.567], [0.428, 0], [1, 0]
 	], 350, 350, sr);
 	// used to duck the original signal during a noise burst
-	var sigEnv = ppMteEnvelope([
+	var sigEnv = mteEnvelope([
 		[0, 0], [0.143, 0.2], [0.305, 0.8], [0.383, 0.5], [0.428, 0], [1, 0]
 	], 350, 350, sr);
 
 	// STK granulator over pink noise: randomFactor 1.0, stretch 0, 10 voices
-	var granulator = ppMteGranulate(ppMteNoise(sr, 1.5, 0x165667b1, 0, 0, true), 10, sr);
+	var granulator = mteGranulate(mteNoise(sr, 1.5, 0x165667b1, 0, 0, true), 10, sr);
 	granulator.setRandomFactor(1.0);
 	granulator.setStretch(0);
 
-	var lowFreqGranular = ppMteLoopCrossfade(sr);
+	var lowFreqGranular = mteLoopCrossfade(sr);
 	lowFreqGranular.setLoopCrossfadeLevel(0.25);
 
-	var lpGrains = ppMteButterworth(sr);
+	var lpGrains = mteButterworth(sr);
 	lpGrains.setLowHighPass(2000, true);
-	var hpGrains = ppMteButterworth(sr);
+	var hpGrains = mteButterworth(sr);
 	hpGrains.setLowHighPass(50, false);
-	var lpSignal = ppMteButterworth(sr);
+	var lpSignal = mteButterworth(sr);
 	var out = new Float64Array(2);
 
 	function setInterpolatedParameters(input) {
-		input = ppMteClamp01(input);
+		input = mteClamp01(input);
 		// grain interpolation
 		grainImpact = input;
 		granulator.setGrainParameters(
@@ -682,8 +682,8 @@ function ppMteHurricaneSandy(sr) {
 //   0.00 - 0.50  depth  0 -> 5    periodicity 0.50    rate  7
 //   0.50 - 0.85  depth  5 -> 30   periodicity 0.50->0.25  rate  7 -> 77
 //   0.85 - 1.00  depth 30 -> 60   periodicity 0.25->0.75  rate 77 -> 57
-function ppMteShame(sr) {
-	var rng = ppMteRng(0x85ebca6b);
+function mteShame(sr) {
+	var rng = mteRng(0x85ebca6b);
 	var scale = sr / 44100;
 	// upstream's BUFFER_SIZE is 44100, i.e. exactly one second at its hardcoded
 	// rate; keeping it at one second means `rate` below stays in Hz
@@ -692,7 +692,7 @@ function ppMteShame(sr) {
 	var bufR = new Float32Array(SIZE);
 	// one cycle of 0.5 * (cos(x) - 1): a cosine that only ever goes negative
 	var wave = new Float32Array(SIZE);
-	for (var j = 0; j < SIZE; j++) wave[j] = 0.5 * (Math.cos(2 * PP_MTE_PI * j / (SIZE - 1)) - 1);
+	for (var j = 0; j < SIZE; j++) wave[j] = 0.5 * (Math.cos(2 * MTE_PI * j / (SIZE - 1)) - 1);
 	var curPos = 0;
 	var playPosition = 0;
 	var curPosWTable = 0;
@@ -703,7 +703,7 @@ function ppMteShame(sr) {
 	var out = new Float64Array(2);
 
 	function setInterpolatedParameters(input) {
-		input = ppMteClamp01(input);
+		input = mteClamp01(input);
 		if (input <= 0.5) {
 			depth = 5 * input / 0.5;
 			randPeriodicity = 0.5;
@@ -765,12 +765,12 @@ function ppMteShame(sr) {
 
 // ------------------------------------------------- AudioGraph.h --
 
-function ppMagneticTapeState(sr) {
-	var inSaturation = ppMteInputSaturation(sr);
-	var flange = ppMteFlange(sr);
-	var sandy = ppMteHurricaneSandy(sr);
-	var shame = ppMteShame(sr);
-	var hiss = ppMteHiss(sr);
+function magneticTapeState(sr) {
+	var inSaturation = mteInputSaturation(sr);
+	var flange = mteFlange(sr);
+	var sandy = mteHurricaneSandy(sr);
+	var shame = mteShame(sr);
+	var hiss = mteHiss(sr);
 	var inputGain = 1;
 	var outputGain = 1;
 	var blendValue = 1;
@@ -834,19 +834,19 @@ function ppMagneticTapeState(sr) {
 class MagneticTapeProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
-		this.st = ppMagneticTapeState(sampleRate);
+		this.st = magneticTapeState(sampleRate);
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
 		this.st.configure({
-			inputDrive: ppv(parameters.inputDrive, 0),
-			outputLevel: ppv(parameters.outputLevel, 0),
-			shame: ppv(parameters.shame, 0),
-			age: ppv(parameters.age, 0),
-			hiss: ppv(parameters.hiss, 0),
-			mix: ppv(parameters.mix, 0),
-			flange: ppv(parameters.flange, 0),
+			inputDrive: paramAt(parameters.inputDrive, 0),
+			outputLevel: paramAt(parameters.outputLevel, 0),
+			shame: paramAt(parameters.shame, 0),
+			age: paramAt(parameters.age, 0),
+			hiss: paramAt(parameters.hiss, 0),
+			mix: paramAt(parameters.mix, 0),
+			flange: paramAt(parameters.flange, 0),
 		});
 		var i;
 		for (i = 0; i < s.n; i++) {
@@ -857,7 +857,7 @@ class MagneticTapeProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-MagneticTapeProcessor.parameterDescriptors = ppDesc([
+MagneticTapeProcessor.parameterDescriptors = desc([
 	['inputDrive', 0.5, 0, 1],
 	['outputLevel', 0.5, 0, 1],
 	['shame', 0, 0, 1],

@@ -13,7 +13,7 @@
 // the spacing); feedback returns through the record path so every repeat is
 // re-recorded and re-saturated.
 
-var PP_TAPE_TYPES = [
+var TAPE_TYPES = [
 	// Type I (ferric): strong emphasis, pronounced bump, dullest top.
 	{ a: 2.2e4 / 3.5e5, alpha: 1.6e-3, k: 2.7e4 / 3.5e5, c: 0.17, drive: 4 * (2.2e4 / 3.5e5), bias: 0.82,
 		emphasisDb: 6.0, emphasisFc: 5200, bumpFc: 85, bumpDb: 2.6, gapFc: 13000, spacingDb: -2.5, spacingFc: 9000 },
@@ -24,84 +24,37 @@ var PP_TAPE_TYPES = [
 	{ a: 2.2e4 / 3.5e5, alpha: 1.6e-3, k: (2.7e4 / 3.5e5) * 1.5, c: 0.17, drive: 4 * (2.2e4 / 3.5e5) * 0.6, bias: 0.92,
 		emphasisDb: 3.5, emphasisFc: 7000, bumpFc: 76, bumpDb: 1.8, gapFc: 16500, spacingDb: -1.2, spacingFc: 11000 },
 ];
-var PP_TAPE_DRIVE_LO = 0.35;  // effDrive = base*(LO + SPAN*drive)
-var PP_TAPE_DRIVE_SPAN = 2.2;
+var TAPE_DRIVE_LO = 0.35;  // effDrive = base*(LO + SPAN*drive)
+var TAPE_DRIVE_SPAN = 2.2;
 
-function ppClamp(v, lo, hi) {
-	return v < lo ? lo : v > hi ? hi : v;
-}
-
-// RBJ biquad with shelves / peaking / LP / HP (normalized coefficients baked).
-function ppRBJ() {
-	var b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
-	var x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-	function norm(nb0, nb1, nb2, na0, na1, na2) {
-		var inv = 1 / na0;
-		b0 = nb0 * inv; b1 = nb1 * inv; b2 = nb2 * inv; a1 = na1 * inv; a2 = na2 * inv;
-	}
-	function setup(kind, sr, f, q, db) {
-		f = ppClamp(f, 1, 0.49 * sr);
-		var A = Math.pow(10, db / 40);
-		var w0 = 2 * Math.PI * f / sr;
-		var cosw = Math.cos(w0);
-		var sinw = Math.sin(w0);
-		if (kind === 'peaking') {
-			var al = sinw / (2 * q);
-			norm(1 + al * A, -2 * cosw, 1 - al * A, 1 + al / A, -2 * cosw, 1 - al / A);
-		} else if (kind === 'lowshelf') {
-			var als = sinw / 2 * Math.sqrt((A + 1 / A) * (1 / q - 1) + 2);
-			var bs = 2 * Math.sqrt(A) * als;
-			norm(A * ((A + 1) - (A - 1) * cosw + bs), 2 * A * ((A - 1) - (A + 1) * cosw), A * ((A + 1) - (A - 1) * cosw - bs),
-				(A + 1) + (A - 1) * cosw + bs, -2 * ((A - 1) + (A + 1) * cosw), (A + 1) + (A - 1) * cosw - bs);
-		} else if (kind === 'highshelf') {
-			var alh = sinw / 2 * Math.sqrt((A + 1 / A) * (1 / q - 1) + 2);
-			var bh = 2 * Math.sqrt(A) * alh;
-			norm(A * ((A + 1) + (A - 1) * cosw + bh), -2 * A * ((A - 1) + (A + 1) * cosw), A * ((A + 1) + (A - 1) * cosw - bh),
-				(A + 1) - (A - 1) * cosw + bh, 2 * ((A - 1) - (A + 1) * cosw), (A + 1) - (A - 1) * cosw - bh);
-		} else if (kind === 'lowpass') {
-			var al2 = sinw / (2 * q);
-			norm((1 - cosw) / 2, 1 - cosw, (1 - cosw) / 2, 1 + al2, -2 * cosw, 1 - al2);
-		} else { // highpass
-			var al3 = sinw / (2 * q);
-			norm((1 + cosw) / 2, -(1 + cosw), (1 + cosw) / 2, 1 + al3, -2 * cosw, 1 - al3);
-		}
-	}
-	function process(x) {
-		var y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
-		x2 = x1; x1 = x; y2 = y1; y1 = y;
-		return Number.isFinite(y) ? y : 0;
-	}
-	function reset() { x1 = x2 = y1 = y2 = 0; }
-	return { set: setup, process: process, reset: reset };
-}
-
+// clamp() and rbj() are shared worklet helpers — see worklet/core.js.
 // Jiles-Atherton hysteresis (after Chowdhury, DAFx-19 / re-deemer, ISC).
-function ppLangevin(x) {
+function langevin(x) {
 	if (Math.abs(x) < 1e-4) return x / 3 - x * x * x / 45;
 	return 1 / Math.tanh(x) - 1 / x;
 }
-function ppLangevinD(x) {
+function langevinD(x) {
 	if (Math.abs(x) < 1e-4) return 1 / 3 - x * x / 15;
 	var coth = 1 / Math.tanh(x);
 	return 1 - coth * coth + 1 / (x * x);
 }
-function ppTapeParams(typeIdx, driveParam) {
-	var t = PP_TAPE_TYPES[ppClamp(typeIdx | 0, 0, PP_TAPE_TYPES.length - 1)];
+function tapeParams(typeIdx, driveParam) {
+	var t = TAPE_TYPES[clamp(typeIdx | 0, 0, TAPE_TYPES.length - 1)];
 	return {
 		a: t.a, alpha: t.alpha, k: t.k, c: t.c, bias: t.bias,
 		baseDrive: t.drive,
-		drive: t.drive * (PP_TAPE_DRIVE_LO + PP_TAPE_DRIVE_SPAN * driveParam),
+		drive: t.drive * (TAPE_DRIVE_LO + TAPE_DRIVE_SPAN * driveParam),
 		emphasisDb: t.emphasisDb, emphasisFc: t.emphasisFc,
 		bumpFc: t.bumpFc, bumpDb: t.bumpDb, gapFc: t.gapFc,
 		spacingDb: t.spacingDb, spacingFc: t.spacingFc,
 	};
 }
-function ppTapeMagState() {
+function tapeMagState() {
 	var m = 0, hPrev = 0, mAnPrev = 0, xPrev = 0;
 	function dmdt(p, mm, h, dh) {
 		var q = (h + p.alpha * mm) / p.a;
-		var mAn = ppLangevin(q);
-		var l = ppLangevinD(q);
+		var mAn = langevin(q);
+		var l = langevinD(q);
 		var delta = dh >= 0 ? 1 : -1;
 		var diff = mAn - mm;
 		var deltaM = diff * delta >= 0 ? 1 : 0;
@@ -121,10 +74,10 @@ function ppTapeMagState() {
 		var k4 = dt * dmdt(p, m + k3, h, dh);
 		var mn = m + (k1 + 2 * k2 + 2 * k3 + k4) / 6;
 		if (!Number.isFinite(mn)) mn = 0;
-		m = ppClamp(mn, -1, 1);
+		m = clamp(mn, -1, 1);
 		hPrev = h;
-		var mAn = ppLangevin((h + p.alpha * mAnPrev) / p.a);
-		mAn = ppLangevin((h + p.alpha * mAn) / p.a);
+		var mAn = langevin((h + p.alpha * mAnPrev) / p.a);
+		mAn = langevin((h + p.alpha * mAn) / p.a);
 		mAnPrev = mAn;
 		return p.bias * mAn + (1 - p.bias) * m;
 	}
@@ -140,9 +93,9 @@ function ppTapeMagState() {
 }
 // Normalize the hysteresis small-signal gain so a knob change of drive does
 // not change the level (measured once per tape type at construction).
-function ppTapeMagNorm(typeIdx, sr) {
-	var p = ppTapeParams(typeIdx, 1);
-	var st = ppTapeMagState();
+function tapeMagNorm(typeIdx, sr) {
+	var p = tapeParams(typeIdx, 1);
+	var st = tapeMagState();
 	var dt2 = 1 / (2 * sr);
 	var n = Math.max(2048, Math.floor(sr * 0.06));
 	var inSq = 0, outSq = 0;
@@ -157,7 +110,7 @@ function ppTapeMagNorm(typeIdx, sr) {
 
 // Shared capstan: wow + flutter + scrape flutter speed multiplier and, per
 // channel, oxide dropout dips (re-deemer wow_flutter.rs, ISC).
-function ppTapeWowFlutter(sr) {
+function tapeWowFlutter(sr) {
 	var FL = [6.3, 10.7, 17.9, 29.4];
 	var FA = [1.0, 0.7, 0.45, 0.25];
 	var wowPhase = 0;
@@ -217,22 +170,22 @@ function ppTapeWowFlutter(sr) {
 	};
 }
 
-function ppTapeDelayState(sr) {
+function tapeDelayState(sr) {
 	var bufLen = Math.ceil(sr * 3.5) + 8;
-	var mags = [ppTapeMagState(), ppTapeMagState()];
-	var lines = [ppDelayLine(bufLen), ppDelayLine(bufLen)];
-	var preEmph = [ppRBJ(), ppRBJ()];
-	var deEmph = [ppRBJ(), ppRBJ()];
-	var bump = [ppRBJ(), ppRBJ()];
-	var gap = [ppRBJ(), ppRBJ()];
-	var spacingEq = [ppRBJ(), ppRBJ()];
-	var bassEq = [ppRBJ(), ppRBJ()];
-	var trebleEq = [ppRBJ(), ppRBJ()];
+	var mags = [tapeMagState(), tapeMagState()];
+	var lines = [delayLine(bufLen), delayLine(bufLen)];
+	var preEmph = [rbj(), rbj()];
+	var deEmph = [rbj(), rbj()];
+	var bump = [rbj(), rbj()];
+	var gap = [rbj(), rbj()];
+	var spacingEq = [rbj(), rbj()];
+	var bassEq = [rbj(), rbj()];
+	var trebleEq = [rbj(), rbj()];
 	var eraseEnv = [0, 0], eraseLp = [0, 0];
 	var envCoeff = 1 - Math.exp(-2 * Math.PI * 25 / sr);
 	var osDt = 1 / (2 * sr);
-	var capstan = ppTapeWowFlutter(sr);
-	var norms = [ppTapeMagNorm(0, sr), ppTapeMagNorm(1, sr), ppTapeMagNorm(2, sr)];
+	var capstan = tapeWowFlutter(sr);
+	var norms = [tapeMagNorm(0, sr), tapeMagNorm(1, sr), tapeMagNorm(2, sr)];
 	var timeCoeff = 1 - Math.exp(-1 / (0.12 * sr));
 	var curTimeMs = 220;
 	var timeMs = 220;
@@ -254,16 +207,16 @@ function ppTapeDelayState(sr) {
 		cfg.mix = params.mix;
 		cfg.hiss = params.hiss;
 		cfg.wear = params.age;
-		var typeIdx = ppClamp(params.tapeType | 0, 0, 2);
-		cfg.p = ppTapeParams(typeIdx, params.drive);
-		cfg.outNorm = norms[typeIdx] * (2.55 / (PP_TAPE_DRIVE_LO + PP_TAPE_DRIVE_SPAN * params.drive));
+		var typeIdx = clamp(params.tapeType | 0, 0, 2);
+		cfg.p = tapeParams(typeIdx, params.drive);
+		cfg.outNorm = norms[typeIdx] * (2.55 / (TAPE_DRIVE_LO + TAPE_DRIVE_SPAN * params.drive));
 		for (var i = 0; i < 2; i++) {
 			var p = cfg.p;
 			preEmph[i].set('highshelf', sr, p.emphasisFc, 0.9, p.emphasisDb);
 			deEmph[i].set('highshelf', sr, p.emphasisFc, 0.9, -p.emphasisDb);
 			spacingEq[i].set('highshelf', sr, p.spacingFc, 0.8, p.spacingDb);
-			bump[i].set('peaking', sr, ppClamp(p.bumpFc, 25, 400), 1.1, p.bumpDb);
-			gap[i].set('lowpass', sr, ppClamp(p.gapFc * (1 - 0.62 * params.age), 1200, 0.45 * sr), 0.6, 0);
+			bump[i].set('peaking', sr, clamp(p.bumpFc, 25, 400), 1.1, p.bumpDb);
+			gap[i].set('lowpass', sr, clamp(p.gapFc * (1 - 0.62 * params.age), 1200, 0.45 * sr), 0.6, 0);
 			bassEq[i].set('lowshelf', sr, 200, 0.9, params.bass);
 			trebleEq[i].set('highshelf', sr, 3000, 0.9, params.treble);
 		}
@@ -275,9 +228,9 @@ function ppTapeDelayState(sr) {
 		var base = (curTimeMs / 1000) * sr;
 		var sp = base * cfg.density;
 		var maxd = bufLen - 4;
-		var d1 = ppClamp(base * invSpeed, 1, maxd);
-		var d2 = ppClamp((base + sp) * invSpeed, 1, maxd);
-		var d3 = ppClamp((base + 2 * sp) * invSpeed, 1, maxd);
+		var d1 = clamp(base * invSpeed, 1, maxd);
+		var d2 = clamp((base + sp) * invSpeed, 1, maxd);
+		var d3 = clamp((base + 2 * sp) * invSpeed, 1, maxd);
 		for (var ch = 0; ch < 2; ch++) {
 			var x = ch === 0 ? x0 : x1;
 			var line = lines[ch];
@@ -310,26 +263,26 @@ function ppTapeDelayState(sr) {
 class TapeDelayProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
-		this.st = ppTapeDelayState(sampleRate);
+		this.st = tapeDelayState(sampleRate);
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
 		this.st.configure({
-			time: ppv(parameters.time, 0),
-			feedback: ppv(parameters.feedback, 0),
-			mix: ppv(parameters.mix, 0),
-			head1: ppv(parameters.head1, 0),
-			head2: ppv(parameters.head2, 0),
-			head3: ppv(parameters.head3, 0),
-			density: ppv(parameters.density, 0),
-			wowFlutter: ppv(parameters.wowFlutter, 0),
-			drive: ppv(parameters.drive, 0),
-			bass: ppv(parameters.bass, 0),
-			treble: ppv(parameters.treble, 0),
-			hiss: ppv(parameters.hiss, 0),
-			tapeType: ppv(parameters.tapeType, 0),
-			age: ppv(parameters.age, 0),
+			time: paramAt(parameters.time, 0),
+			feedback: paramAt(parameters.feedback, 0),
+			mix: paramAt(parameters.mix, 0),
+			head1: paramAt(parameters.head1, 0),
+			head2: paramAt(parameters.head2, 0),
+			head3: paramAt(parameters.head3, 0),
+			density: paramAt(parameters.density, 0),
+			wowFlutter: paramAt(parameters.wowFlutter, 0),
+			drive: paramAt(parameters.drive, 0),
+			bass: paramAt(parameters.bass, 0),
+			treble: paramAt(parameters.treble, 0),
+			hiss: paramAt(parameters.hiss, 0),
+			tapeType: paramAt(parameters.tapeType, 0),
+			age: paramAt(parameters.age, 0),
 		});
 		var i;
 		for (i = 0; i < s.n; i++) {
@@ -340,7 +293,7 @@ class TapeDelayProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-TapeDelayProcessor.parameterDescriptors = ppDesc([
+TapeDelayProcessor.parameterDescriptors = desc([
 	['time', 220, 30, 600],
 	['feedback', 0.5, 0, 1.05],
 	['mix', 0.5, 0, 1],

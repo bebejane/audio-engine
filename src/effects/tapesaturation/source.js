@@ -47,13 +47,13 @@
 //     delay instead (see DRY_DELAY) — that keeps `mix=0` an exact,
 //     phase-aligned passthrough.
 
-var PP_TS_LN2 = 0.6931471805599453;
+var TS_LN2 = 0.6931471805599453;
 
 // ------------------------------------------------ TapeSaturator.h --
 //
 // The three transfer-function bases, evaluated in double. Kept separate from
 // the bias recentring so the ADAA path can reuse them.
-function ppTsCurve(v, model) {
+function tsCurve(v, model) {
 	if (model === 1) return 2 * Math.tanh(v / 2); // console soft knee
 	if (model === 2) {
 		// exponential saturation; copysign(1 - e^-|v|, v)
@@ -65,23 +65,23 @@ function ppTsCurve(v, model) {
 
 // Aureate's per-model ceiling on Warmth's bias contribution. The order is the
 // voicing: tape is the most forgiving, valve the most asymmetric.
-function ppTsMaxWarmthBias(model) {
+function tsMaxWarmthBias(model) {
 	return model === 1 ? 0.1 : model === 2 ? 0.3 : 0.12;
 }
 
 // ln cosh(v), never forming cosh(v) itself — it overflows in single precision
 // for |v| > ~89, which is exactly where a 24 dB Drive pushes the saturator.
-function ppTsLogCosh(v) {
+function tsLogCosh(v) {
 	var a = Math.abs(v);
-	return a + Math.log1p(Math.exp(-2 * a)) - PP_TS_LN2;
+	return a + Math.log1p(Math.exp(-2 * a)) - TS_LN2;
 }
 
 // Antiderivatives of the three un-biased bases. Any additive constant cancels
 // in the ADAA difference, so none is carried.
-function ppTsAntiderivative(v, model) {
+function tsAntiderivative(v, model) {
 	if (model === 1) {
 		// d/dv [ 4 * ln cosh(v/2) ] = 2 tanh(v/2), the console knee at scale 2
-		return 4 * ppTsLogCosh(v / 2);
+		return 4 * tsLogCosh(v / 2);
 	}
 	if (model === 2) {
 		// d/dv [ |v| + e^-|v| - 1 ] = sign(v) * (1 - e^-|v|) on both branches,
@@ -89,7 +89,7 @@ function ppTsAntiderivative(v, model) {
 		var a = Math.abs(v);
 		return a + Math.exp(-a) - 1;
 	}
-	return ppTsLogCosh(v);
+	return tsLogCosh(v);
 }
 
 // ------------------------------------------- AdaaShapers.h --
@@ -117,17 +117,17 @@ function ppTsAntiderivative(v, model) {
 // bias would put a step in the output at every block boundary. Recomputing both
 // evaluations costs one extra transcendental and removes the artefact.
 
-var PP_TS_MIN_DELTA = 1e-5;
+var TS_MIN_DELTA = 1e-5;
 
-function ppTsAntiderivativeBiased(x, bias, model) {
+function tsAntiderivativeBiased(x, bias, model) {
 	// the bias is handled so the recentring survives into the ADAA path:
 	// f(x+b) - f(b) integrates to F(x+b) - f(b)*x
-	return ppTsAntiderivative(x + bias, model) - ppTsCurve(bias, model) * x;
+	return tsAntiderivative(x + bias, model) - tsCurve(bias, model) * x;
 }
 
 // f(x) = f(x + bias) - f(bias), the Classic-path output
-function ppTsShape(x, bias, model) {
-	return ppTsCurve(x + bias, model) - ppTsCurve(bias, model);
+function tsShape(x, bias, model) {
+	return tsCurve(x + bias, model) - tsCurve(bias, model);
 }
 
 // ------------------------------------------------ 2x half-band --
@@ -137,22 +137,22 @@ function ppTsShape(x, bias, model) {
 // from the centre is exactly zero and the result is a true half-band (centre
 // tap 0.5, tap sum 1, alternating sum 0). Only the 32 odd-offset taps are ever
 // multiplied, so the cost is 32 MACs per output rather than 64.
-var PP_TS_TAPS = 65;
-var PP_TS_HALF_CENTRE = 32; // (TAPS - 1) / 2
-var PP_TS_ODD_LEN = 32; // taps at odd offsets: (TAPS - 1) / 2
-var PP_TS_ODD = null;
+var TS_TAPS = 65;
+var TS_HALF_CENTRE = 32; // (TAPS - 1) / 2
+var TS_ODD_LEN = 32; // taps at odd offsets: (TAPS - 1) / 2
+var TS_ODD = null;
 
-function ppTsOddTaps() {
-	if (PP_TS_ODD) return PP_TS_ODD;
+function tsOddTaps() {
+	if (TS_ODD) return TS_ODD;
 	// Blackman-Harris window coefficients. This form peaks at the centre, which
 	// is what a filter (as opposed to a spectrum estimator) needs.
 	var a0 = 0.35875, a1 = 0.48829, a2 = 0.14128, a3 = 0.01168;
-	var h = new Float64Array(PP_TS_TAPS);
-	for (var n = 0; n < PP_TS_TAPS; n++) {
-		var x = n - PP_TS_HALF_CENTRE;
+	var h = new Float64Array(TS_TAPS);
+	for (var n = 0; n < TS_TAPS; n++) {
+		var x = n - TS_HALF_CENTRE;
 		// ideal half-band lowpass, 2*fc = 0.5; the DC tap is 0.5
 		var ideal = x === 0 ? 0.5 : Math.sin(Math.PI * 0.5 * x) / (Math.PI * x);
-		var ph = (2 * Math.PI * n) / (PP_TS_TAPS - 1);
+		var ph = (2 * Math.PI * n) / (TS_TAPS - 1);
 		var w = a0 - a1 * Math.cos(ph) + a2 * Math.cos(2 * ph) - a3 * Math.cos(3 * ph);
 		h[n] = ideal * w;
 	}
@@ -162,10 +162,10 @@ function ppTsOddTaps() {
 	// a literal 1.0 (= 2 * 0.5), so pinning h[centre] to 0.5 is what keeps that
 	// literal honest if the window is ever retuned. The odd taps inherit the
 	// same scale, which leaves their sum at 0.5.
-	var g = 0.5 / h[PP_TS_HALF_CENTRE];
-	var odd = new Float64Array(PP_TS_ODD_LEN);
-	for (var j = 0; j < PP_TS_ODD_LEN; j++) odd[j] = h[2 * j + 1] * g;
-	PP_TS_ODD = odd;
+	var g = 0.5 / h[TS_HALF_CENTRE];
+	var odd = new Float64Array(TS_ODD_LEN);
+	for (var j = 0; j < TS_ODD_LEN; j++) odd[j] = h[2 * j + 1] * g;
+	TS_ODD = odd;
 	return odd;
 }
 
@@ -173,19 +173,19 @@ function ppTsOddTaps() {
 // the interpolator has to put that factor of 2 back: with the prototype summing
 // to 1, the whole up-stage gain is 2. In the split-by-phase form that lands as
 // 2*0.5 = 1 on the even branch and 2 on the odd-branch dot product.
-function ppTsUp2() {
-	var odd = ppTsOddTaps();
+function tsUp2() {
+	var odd = tsOddTaps();
 	var buf = new Float64Array(64);
 	var w = 0;
 	function process(x, out) {
 		// x[n] lands at w, so x[n-j] is at w-j
 		buf[w] = x;
 		// even phase: the only non-zero even-offset tap is the centre, so the
-		// whole even branch is one sample PP_TS_HALF_CENTRE/2 back at unity
-		out[0] = buf[(w - PP_TS_HALF_CENTRE / 2 + 64) % 64];
+		// whole even branch is one sample TS_HALF_CENTRE/2 back at unity
+		out[0] = buf[(w - TS_HALF_CENTRE / 2 + 64) % 64];
 		// odd phase: the 32 non-zero odd-offset taps
 		var acc = 0;
-		for (var j = 0; j < PP_TS_ODD_LEN; j++) acc += odd[j] * buf[(w - j + 64) % 64];
+		for (var j = 0; j < TS_ODD_LEN; j++) acc += odd[j] * buf[(w - j + 64) % 64];
 		out[1] = 2 * acc;
 		w = (w + 1) % 64;
 	}
@@ -198,18 +198,18 @@ function ppTsUp2() {
 // sum is already the right gain. In split-by-phase form that is 0.5 on the
 // retained even-phase centre tap plus the odd-branch dot product summing to
 // the other 0.5.
-function ppTsDown2() {
-	var odd = ppTsOddTaps();
+function tsDown2() {
+	var odd = tsOddTaps();
 	var buf = new Float64Array(128);
 	var w = 0;
 	function process(even, oddSample) {
 		buf[w] = even;
 		buf[(w + 1) % 128] = oddSample;
-		// centre tap: y[2n-32], the even phase PP_TS_HALF_CENTRE samples back
-		var acc = 0.5 * buf[(w - PP_TS_HALF_CENTRE + 128) % 128];
+		// centre tap: y[2n-32], the even phase TS_HALF_CENTRE samples back
+		var acc = 0.5 * buf[(w - TS_HALF_CENTRE + 128) % 128];
 		// odd taps at y[2n-1-2j]; buf[w+1] holds y[2n+1], so y[2n-1-2j] is
 		// (w+1) - (2j+2) = w-1-2j slots back
-		for (var j = 0; j < PP_TS_ODD_LEN; j++) {
+		for (var j = 0; j < TS_ODD_LEN; j++) {
 			acc += odd[j] * buf[(w - 1 - 2 * j + 128) % 128];
 		}
 		w = (w + 2) % 128;
@@ -224,7 +224,7 @@ function ppTsDown2() {
 // RBJ cookbook, direct form I, one instance per channel. Aureate uses a
 // Butterworth lowpass for the Warmth rolloff and a resonant peak for the head
 // bump, so both shapes live here.
-function ppTsBiquad() {
+function tsBiquad() {
 	var a0 = 1, a1 = 0, a2 = 0, b0 = 1, b1 = 0, b2 = 0;
 	var x1 = 0, x2 = 0, y1 = 0, y2 = 0;
 	function setLowPass(f, q, sr) {
@@ -254,7 +254,7 @@ function ppTsBiquad() {
 
 // ------------------------------------------------- the stage --
 
-function ppTsState(sr) {
+function tsState(sr) {
 	var OVER = 4;
 	// Group delay of the two 2x up stages and the two 2x down stages, in host
 	// samples: 16 (up@2x) + 8 (up@4x) + 8 (down@4x) + 16 (down@2x). The dry
@@ -263,8 +263,8 @@ function ppTsState(sr) {
 	// their own (about half a host sample at Warmth=0, a few at Warmth=1); that
 	// is not compensated, matching upstream, so heavy Warmth with a partial mix
 	// tilts the blend slightly.
-	var DRY_DELAY = PP_TS_HALF_CENTRE / 2 + PP_TS_HALF_CENTRE / 4 +
-		PP_TS_HALF_CENTRE / 4 + PP_TS_HALF_CENTRE / 2;
+	var DRY_DELAY = TS_HALF_CENTRE / 2 + TS_HALF_CENTRE / 4 +
+		TS_HALF_CENTRE / 4 + TS_HALF_CENTRE / 2;
 	// 50 ms glide, as upstream, expressed in samples so the block-length
 	// correction below is exact rather than a fudge
 	var SMOOTH_SAMPLES = 0.05 * sr;
@@ -277,10 +277,10 @@ function ppTsState(sr) {
 	var prevIn = [0, 0]; // ADAA1 previous input, per channel
 	var ch;
 	for (ch = 0; ch < 2; ch++) {
-		up[ch] = [ppTsUp2(), ppTsUp2()];
-		dn[ch] = [ppTsDown2(), ppTsDown2()];
-		bq[ch] = ppTsBiquad(); // Warmth lowpass
-		hp[ch] = ppTsBiquad(); // head bump peak
+		up[ch] = [tsUp2(), tsUp2()];
+		dn[ch] = [tsDown2(), tsDown2()];
+		bq[ch] = tsBiquad(); // Warmth lowpass
+		hp[ch] = tsBiquad(); // head bump peak
 	}
 	// dry path delay line, one per channel
 	var dryBuf = [new Float64Array(DRY_DELAY + 1), new Float64Array(DRY_DELAY + 1)];
@@ -309,7 +309,7 @@ function ppTsState(sr) {
 	}
 
 	// One-pole glide toward each target, stepped once per block. The
-	// coefficient has to account for the block length: ppSlew() returns the
+	// coefficient has to account for the block length: slew() returns the
 	// per-*sample* step, and using it per block would stretch a 50 ms glide to
 	// (44100/128)*50 ms = 17 s, which no parameter would ever visibly move in.
 	// Holding the target for n samples and stepping once is
@@ -335,7 +335,7 @@ function ppTsState(sr) {
 		// Warmth's bias contribution is Character-dependent; Bias adds to it;
 		// the sum is clamped so driving both to their extremes together cannot
 		// push the saturator into a fully one-sided operating point.
-		var bias = warmth * ppTsMaxWarmthBias(model) + cur.bias * 0.3;
+		var bias = warmth * tsMaxWarmthBias(model) + cur.bias * 0.3;
 		if (bias > 0.9) bias = 0.9; else if (bias < -0.9) bias = -0.9;
 		var wet = x * driveGain;
 
@@ -366,12 +366,12 @@ function ppTsState(sr) {
 				// precision well before it is exactly 0; the correct limit is
 				// the midpoint evaluation, which is continuous with the quotient
 				// on either side, so the branch switch is inaudible
-				v = Math.abs(delta) < PP_TS_MIN_DELTA
-					? ppTsShape(0.5 * (v + prev), bias, model)
-					: (ppTsAntiderivativeBiased(v, bias, model) -
-						ppTsAntiderivativeBiased(prev, bias, model)) / delta;
+				v = Math.abs(delta) < TS_MIN_DELTA
+					? tsShape(0.5 * (v + prev), bias, model)
+					: (tsAntiderivativeBiased(v, bias, model) -
+						tsAntiderivativeBiased(prev, bias, model)) / delta;
 			} else {
-				v = ppTsShape(v, bias, model);
+				v = tsShape(v, bias, model);
 			}
 			dnIn[i] = v;
 		}
@@ -428,19 +428,19 @@ function ppTsState(sr) {
 class TapeSaturationProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
-		this.st = ppTsState(sampleRate);
+		this.st = tsState(sampleRate);
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
 		this.st.configure({
-			drive: ppv(parameters.drive, 0),
-			warmth: ppv(parameters.warmth, 0),
-			bias: ppv(parameters.bias, 0),
-			character: Math.round(ppv(parameters.character, 0)),
-			quality: ppv(parameters.quality, 0),
-			mix: ppv(parameters.mix, 0),
-			output: ppv(parameters.output, 0),
+			drive: paramAt(parameters.drive, 0),
+			warmth: paramAt(parameters.warmth, 0),
+			bias: paramAt(parameters.bias, 0),
+			character: Math.round(paramAt(parameters.character, 0)),
+			quality: paramAt(parameters.quality, 0),
+			mix: paramAt(parameters.mix, 0),
+			output: paramAt(parameters.output, 0),
 		});
 		this.st.smooth(s.n);
 		var m = this.st;
@@ -464,7 +464,7 @@ class TapeSaturationProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-TapeSaturationProcessor.parameterDescriptors = ppDesc([
+TapeSaturationProcessor.parameterDescriptors = desc([
 	['drive', 0.25, 0, 1],
 	['warmth', 0.35, 0, 1],
 	['bias', 0, -1, 1],

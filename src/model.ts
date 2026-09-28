@@ -438,6 +438,7 @@ export default class ModelManager {
 			if (cfg.rate !== undefined) this.engine.rate(cfg.id, cfg.rate);
 			if (cfg.pitch !== undefined) this.engine.pitch(cfg.id, cfg.pitch);
 			if (cfg.pan !== undefined) this.engine.pan(cfg.id, cfg.pan);
+			if (cfg.eq) cfg.eq.forEach((b, i) => this.engine.eq(cfg.id, i, b));
 			this.engine.loop(cfg.id, !!cfg.loop, { start: cfg.loopStart, end: cfg.loopEnd });
 			if (cfg.reversed !== undefined) this.engine.reverse(cfg.id, !!cfg.reversed);
 			if (cfg.locked !== undefined) this.engine.lock(cfg.id, !!cfg.locked);

@@ -1,22 +1,22 @@
 class QuadrafuzzProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
-		this.lpL = ppBiquad();
-		this.bp1L = ppBiquad();
-		this.bp2L = ppBiquad();
-		this.hpL = ppBiquad();
-		this.lpR = ppBiquad();
-		this.bp1R = ppBiquad();
-		this.bp2R = ppBiquad();
-		this.hpR = ppBiquad();
+		this.lpL = biquad();
+		this.bp1L = biquad();
+		this.bp2L = biquad();
+		this.hpL = biquad();
+		this.lpR = biquad();
+		this.bp1R = biquad();
+		this.bp2R = biquad();
+		this.hpR = biquad();
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
-		var low = ppv(parameters.lowGain, 0) * 150;
-		var midLow = ppv(parameters.midLowGain, 0) * 150;
-		var midHigh = ppv(parameters.midHighGain, 0) * 150;
-		var high = ppv(parameters.highGain, 0) * 150;
+		var low = paramAt(parameters.lowGain, 0) * 150;
+		var midLow = paramAt(parameters.midLowGain, 0) * 150;
+		var midHigh = paramAt(parameters.midHighGain, 0) * 150;
+		var high = paramAt(parameters.highGain, 0) * 150;
 		this.lpL.set('lowpass', 147, 0.7071, sampleRate);
 		this.bp1L.set('bandpass', 587, 0.7071, sampleRate);
 		this.bp2L.set('bandpass', 2490, 0.7071, sampleRate);
@@ -29,22 +29,22 @@ class QuadrafuzzProcessor extends AudioWorkletProcessor {
 		for (i = 0; i < s.n; i++) {
 			var xL = s.inL[i];
 			var yL = xL
-				+ ppDistort(this.lpL.process(xL), low)
-				+ ppDistort(this.bp1L.process(xL), midLow)
-				+ ppDistort(this.bp2L.process(xL), midHigh)
-				+ ppDistort(this.hpL.process(xL), high);
+				+ distort(this.lpL.process(xL), low)
+				+ distort(this.bp1L.process(xL), midLow)
+				+ distort(this.bp2L.process(xL), midHigh)
+				+ distort(this.hpL.process(xL), high);
 			s.outL[i] = yL;
 			if (s.outR) {
 				var xR = s.inR[i];
 				s.outR[i] = xR
-					+ ppDistort(this.lpR.process(xR), low)
-					+ ppDistort(this.bp1R.process(xR), midLow)
-					+ ppDistort(this.bp2R.process(xR), midHigh)
-					+ ppDistort(this.hpR.process(xR), high);
+					+ distort(this.lpR.process(xR), low)
+					+ distort(this.bp1R.process(xR), midLow)
+					+ distort(this.bp2R.process(xR), midHigh)
+					+ distort(this.hpR.process(xR), high);
 			}
 		}
 		return true;
 	}
 }
-QuadrafuzzProcessor.parameterDescriptors = ppDesc([['lowGain', 0.6, 0, 1], ['midLowGain', 0.8, 0, 1], ['midHighGain', 0.5, 0, 1], ['highGain', 0.6, 0, 1]]);
+QuadrafuzzProcessor.parameterDescriptors = desc([['lowGain', 0.6, 0, 1], ['midLowGain', 0.8, 0, 1], ['midHighGain', 0.5, 0, 1], ['highGain', 0.6, 0, 1]]);
 registerProcessor('quadrafuzz', QuadrafuzzProcessor);

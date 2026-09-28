@@ -1,15 +1,15 @@
 class DistortionProcessor extends AudioWorkletProcessor {
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
-		var gain = ppv(parameters.gain, 0) * 100;
+		var gain = paramAt(parameters.gain, 0) * 100;
 		var i;
 		for (i = 0; i < s.n; i++) {
-			s.outL[i] = ppDistort(s.inL[i], gain);
-			if (s.outR) s.outR[i] = ppDistort(s.inR[i], gain);
+			s.outL[i] = distort(s.inL[i], gain);
+			if (s.outR) s.outR[i] = distort(s.inR[i], gain);
 		}
 		return true;
 	}
 }
-DistortionProcessor.parameterDescriptors = ppDesc([['gain', 0.5, 0, 1]]);
+DistortionProcessor.parameterDescriptors = desc([['gain', 0.5, 0, 1]]);
 registerProcessor('distortion', DistortionProcessor);

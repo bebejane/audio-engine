@@ -301,6 +301,27 @@ trim and auto gain — those are separate instruments in Aureate.
 | `depth` | `0.5` | `0 … 1` |
 | `mix` | `0.5` | `0 … 1` |
 
+## Channel EQ (per sound)
+
+Every sound's channel processor (`src/effects/worklet/channel.js`) carries a
+**4-band EQ** that runs after the effects and before the panner (the channel
+strip). It is not a catalog effect — control it through `sound.eq(...)` /
+`engine.eq(id, ...)`:
+
+```ts
+engine.eq(id);                       // -> EqBand[] (all four bands)
+engine.eq(id, 0);                    // -> one band
+engine.eq(id, 0, { on: true, type: 'lowshelf', frequency: 100, gain: 4, q: 0.7 });
+engine.eq(id, 2, { gain: -3 });      // merge a single field
+```
+
+- Bands are `0..3`; types are `lowshelf | peaking | highshelf | lowpass | highpass`.
+- `frequency` 20–20000 Hz, `gain` ±18 dB (ignored by low/highpass), `q` 0.1–10.
+- Flat (every band off or 0 dB) is bypassed in the DSP, so an unused EQ costs
+  nothing; enabling a band lazily creates the channel processor if needed.
+- Serialized by `Sound.getSaveState()` (presets and `.zip` models); a saved
+  model without `eq` loads flat.
+
 ## Adding a new effect
 
 1. Create `src/effects/<id>/source.js` with the DSP (`registerProcessor('<id>', …)`).

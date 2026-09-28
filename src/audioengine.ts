@@ -8,6 +8,7 @@ import Recorder from './recorder';
 import Analyser from './analyser';
 import { EFFECTS, createEffect } from './effects';
 import { ensureEffectsWorklet } from './effects/worklet';
+import type { EqBand, EqBandOptions } from './types';
 import { EventEmitter } from 'events';
 import ModelManager from './model';
 import Automation from './automation';
@@ -600,6 +601,9 @@ class AudioEngine extends EventEmitter {
 			.on('elapsed', (elapsed) => {
 				this.emit('elapsed' + id, elapsed);
 			})
+			.on('eq', (sid, band, settings) => {
+				this.emit('eq' + id, band, settings);
+			})
 			.on('muted', (on) => {})
 			.on('loopend', (on) => {
 				this.emit('loopend' + id, on);
@@ -839,6 +843,18 @@ class AudioEngine extends EventEmitter {
 		} else {
 			this.get().forEach((s) => s.sound.volume(vol));
 		}
+	}
+	/**
+	 * Get or set one sound's 4-band channel EQ (applied in the channel
+	 * processor, after the effects and before the panner).
+	 *
+	 * - `eq(id)` → all four bands (a copy).
+	 * - `eq(id, band)` → one band (0–3).
+	 * - `eq(id, band, options)` → merge the given fields into one band.
+	 */
+	eq(id: string, band?: number, options?: EqBandOptions): EqBand | EqBand[] | undefined {
+		const s = this._sound(id);
+		return s ? s.eq(band, options) : undefined;
 	}
 	/** Get one sound's additive gain (no `gain`) or set it. */
 	gain(id: string, gain?: number): number | void {

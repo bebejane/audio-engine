@@ -1,8 +1,8 @@
-function ppv(p, i) {
+function paramAt(p, i) {
 	return p && p.length > 1 ? p[i] : p && p.length ? p[0] : 0;
 }
 // dry/wet mix levels matching Utils.getDryLevel/getWetLevel
-function ppMixLevels(mix) {
+function mixLevels(mix) {
 	var dry = 1;
 	var wet = 1;
 	if (mix <= 0.5) {
@@ -15,12 +15,12 @@ function ppMixLevels(mix) {
 	return { dry: dry, wet: wet };
 }
 // one-pole/T60-ish smoothing coefficient
-function ppSlew(time, sr) {
+function slew(time, sr) {
 	if (!(time > 0)) return 1;
 	return 1 - Math.exp(-1 / (sr * time));
 }
 // RBJ biquad (lowpass / highpass / bandpass, constant-skirt)
-function ppBiquad() {
+function biquad() {
 	var a0 = 1, a1 = 0, a2 = 0, b0 = 1, b1 = 0, b2 = 0;
 	var x1 = 0, x2 = 0, y1 = 0, y2 = 0;
 	function set(type, f, q, sr) {
@@ -54,8 +54,58 @@ function ppBiquad() {
 	}
 	return { set: set, process: process };
 }
+// clamp a value into [lo, hi]
+function clamp(v, lo, hi) {
+	return v < lo ? lo : v > hi ? hi : v;
+}
+// RBJ Audio EQ Cookbook biquad: peaking / low-shelf / high-shelf / LP / HP,
+// coefficients normalized on `set`. Shared by channel.js (channel EQ) and
+// tapedelay (tone stack). `set(kind, sr, f, q, db)`.
+function rbj() {
+	var b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+	var x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+	function norm(nb0, nb1, nb2, na0, na1, na2) {
+		var inv = 1 / na0;
+		b0 = nb0 * inv; b1 = nb1 * inv; b2 = nb2 * inv; a1 = na1 * inv; a2 = na2 * inv;
+	}
+	function setup(kind, sr, f, q, db) {
+		f = clamp(f, 1, 0.49 * sr);
+		q = clamp(q, 0.05, 20);
+		var A = Math.pow(10, db / 40);
+		var w0 = 2 * Math.PI * f / sr;
+		var cosw = Math.cos(w0);
+		var sinw = Math.sin(w0);
+		if (kind === 'peaking') {
+			var al = sinw / (2 * q);
+			norm(1 + al * A, -2 * cosw, 1 - al * A, 1 + al / A, -2 * cosw, 1 - al / A);
+		} else if (kind === 'lowshelf') {
+			var als = sinw / 2 * Math.sqrt((A + 1 / A) * (1 / q - 1) + 2);
+			var bs = 2 * Math.sqrt(A) * als;
+			norm(A * ((A + 1) - (A - 1) * cosw + bs), 2 * A * ((A - 1) - (A + 1) * cosw), A * ((A + 1) - (A - 1) * cosw - bs),
+				(A + 1) + (A - 1) * cosw + bs, -2 * ((A - 1) + (A + 1) * cosw), (A + 1) + (A - 1) * cosw - bs);
+		} else if (kind === 'highshelf') {
+			var alh = sinw / 2 * Math.sqrt((A + 1 / A) * (1 / q - 1) + 2);
+			var bh = 2 * Math.sqrt(A) * alh;
+			norm(A * ((A + 1) + (A - 1) * cosw + bh), -2 * A * ((A - 1) + (A + 1) * cosw), A * ((A + 1) + (A - 1) * cosw - bh),
+				(A + 1) - (A - 1) * cosw + bh, 2 * ((A - 1) - (A + 1) * cosw), (A + 1) - (A - 1) * cosw - bh);
+		} else if (kind === 'lowpass') {
+			var al2 = sinw / (2 * q);
+			norm((1 - cosw) / 2, 1 - cosw, (1 - cosw) / 2, 1 + al2, -2 * cosw, 1 - al2);
+		} else { // highpass
+			var al3 = sinw / (2 * q);
+			norm((1 + cosw) / 2, -(1 + cosw), (1 + cosw) / 2, 1 + al3, -2 * cosw, 1 - al3);
+		}
+	}
+	function process(x) {
+		var y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+		x2 = x1; x1 = x; y2 = y1; y1 = y;
+		return Number.isFinite(y) ? y : 0;
+	}
+	function reset() { x1 = x2 = y1 = y2 = 0; }
+	return { set: setup, process: process, reset: reset };
+}
 // fractional-delay line
-function ppDelayLine(maxSamples) {
+function delayLine(maxSamples) {
 	var size = maxSamples + 1;
 	var buf = new Float32Array(size);
 	var pos = 0;
@@ -80,7 +130,7 @@ function ppDelayLine(maxSamples) {
 	return { write: write, read: read, size: size };
 }
 // iterative radix-2 complex FFT (in place, interleaved real+imag arrays)
-function ppFft(n) {
+function fft(n) {
 	var levels = 0;
 	var m = n;
 	while (m > 1) { m = m >> 1; levels++; }
@@ -136,10 +186,10 @@ function ppFft(n) {
 }
 // uniform partitioned overlap-save convolution (Gardner's UPOLS), block=128,
 // FFT=256, partition=128. Exact linear convolution of the stream with ir.
-function ppConvolver() {
+function convolver() {
 	var block = 128;
 	var N = 256;
-	var fft = ppFft(N);
+	var fftT = fft(N);
 	var H = [];
 	var Xfd = [];
 	var ring = new Float32Array(N);
@@ -156,7 +206,7 @@ function ppConvolver() {
 			var off = i * block;
 			var ln = Math.min(block, ir.length - off);
 			for (var s = 0; s < ln; s++) timeRe[s] = ir[off + s];
-			fft.transform(timeRe, timeIm, false);
+			fftT.transform(timeRe, timeIm, false);
 			var st = new Float32Array(N * 2);
 			for (var q = 0; q < N; q++) {
 				st[q * 2] = timeRe[q];
@@ -181,7 +231,7 @@ function ppConvolver() {
 		for (i = Xfd.length - 1; i >= 1; i--) Xfd[i].set(Xfd[i - 1]);
 		timeRe.set(ring);
 		timeIm.fill(0);
-		fft.transform(timeRe, timeIm, false);
+		fftT.transform(timeRe, timeIm, false);
 		for (i = 0; i < N; i++) {
 			Xfd[0][i * 2] = timeRe[i];
 			Xfd[0][i * 2 + 1] = timeIm[i];
@@ -198,19 +248,19 @@ function ppConvolver() {
 				freqIm[j] += a * d + b * c;
 			}
 		}
-		fft.transform(freqRe, freqIm, true);
+		fftT.transform(freqRe, freqIm, true);
 		for (i = 0; i < block; i++) outBlock[i] = freqRe[block + i];
 	}
 	return { setIr: setIr, processBlock: processBlock };
 }
 // feed-forward compressor (threshold dB, ratio, knee dB, attack/release s)
-function ppCompressorState() {
+function compressorState() {
 	var env = -120;
 	return function process(x, sr, threshold, knee, ratio, attack, release) {
 		var absx = Math.abs(x);
 		var xdb = 20 * Math.log(Math.max(absx, 1e-9)) / Math.LN10;
-		var atk = ppSlew(attack, sr);
-		var rel = ppSlew(release, sr);
+		var atk = slew(attack, sr);
+		var rel = slew(release, sr);
 		if (xdb > env) env += (xdb - env) * atk;
 		else env += (xdb - env) * rel;
 		var over = env - threshold;
@@ -224,7 +274,7 @@ function ppCompressorState() {
 }
 // diode saturator used by ringmodulator (even function, like the shared
 // WaveShaper curve: d(-v) == d(v))
-function ppDiode(h, v) {
+function diode(h, v) {
 	var a = Math.abs(v);
 	var vb = 0.2;
 	var vl = 0.4;
@@ -233,7 +283,7 @@ function ppDiode(h, v) {
 	return h * a - h * vl + h * ((vl - vb) * (vl - vb)) / (2 * (vl - vb));
 }
 // distortion curve shared by distortion and quadrafuzz
-function ppDistort(x, gain) {
+function distort(x, gain) {
 	var g = gain | 0;
 	if (g <= 0) return (3 * x * 20 * Math.PI / 180) / Math.PI;
 	return (3 + g) * x * 20 * Math.PI / 180 / (Math.PI + g * Math.abs(x));
@@ -243,8 +293,8 @@ function ppDistort(x, gain) {
 // effect and cut delay/reverb tails the moment the source stopped. Feeding
 // zeros keeps the processor running so feedback effects can ring out. Safe to
 // share — no processor writes to its input buffers.
-var ppSilence = null;
-function ppSetupStereo(inputs, outputs) {
+var silence = null;
+function setupStereo(inputs, outputs) {
 	var ip = inputs[0] || [];
 	var op = outputs[0] || [];
 	var outL = op[0];
@@ -254,21 +304,21 @@ function ppSetupStereo(inputs, outputs) {
 	var inL = (ip[0] && ip[0].length) ? ip[0] : null;
 	var inR = (ip[1] && ip[1].length) ? ip[1] : inL;
 	if (!inL) {
-		if (!ppSilence || ppSilence.length !== n) ppSilence = new Float32Array(n);
-		inL = ppSilence;
-		inR = ppSilence;
+		if (!silence || silence.length !== n) silence = new Float32Array(n);
+		inL = silence;
+		inR = silence;
 	}
 	return { inL: inL, inR: inR, outL: outL, outR: outR, n: n };
 }
 // parameter descriptor builder (name, default, min, max)
-function ppDesc(list) {
+function desc(list) {
 	return list.map(function (d) {
 		return { name: d[0], defaultValue: d[1], minValue: d[2], maxValue: d[3] };
 	});
 }
-function ppFilterProcess(instance, s, parameters) {
-	var freq = ppv(parameters.frequency, 0);
-	var peak = ppv(parameters.peak, 0);
+function filterProcess(instance, s, parameters) {
+	var freq = paramAt(parameters.frequency, 0);
+	var peak = paramAt(parameters.peak, 0);
 	var i;
 	instance.bqL.set(instance.type, freq, peak, sampleRate);
 	instance.bqR.set(instance.type, freq, peak, sampleRate);

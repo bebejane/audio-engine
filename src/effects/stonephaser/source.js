@@ -18,13 +18,13 @@
 // (plugins/stone-phaser/gen/StonePhaserDsp.cpp) -- note that the right channel
 // of the stereo build is the same mono phaser with the LFO phase offset by the
 // (smoothed) "phase" control.
-function ppHzToMidi(f) {
+function hzToMidi(f) {
 	return 69 + 12 * Math.log2(f / 440);
 }
 // Faust "sineTri"(0.95, pos) wavetable: a rounded triangle, 1 at pos 0
 // dipping to ~0 at pos 0.5. Faust uses a 128-entry rdtable + linear
 // interpolation; kept here so the sweep matches sample for sample.
-function ppPhaserTriTable() {
+function phaserTriTable() {
 	var n = 128;
 	var a = 0.975;
 	var asin = Math.asin(a);
@@ -35,12 +35,12 @@ function ppPhaserTriTable() {
 	}
 	return t;
 }
-function ppPhaserState() {
+function phaserState() {
 	return { hp: 0, fbp: 0, r5: 0, r4: 0, r3: 0, r2: 0, r1: 0 };
 }
 // one sample of the mono phaser; st is per-channel, the rest are shared
 // per-sample coefficients
-function ppPhaserSample(st, x, p33, hpGain, pfb, fbGain, colorGain, a) {
+function phaserSample(st, x, p33, hpGain, pfb, fbGain, colorGain, a) {
 	var hp1 = st.hp;
 	st.hp = x + p33 * hp1;
 	var inHpf = hpGain * (st.hp - hp1);
@@ -58,7 +58,7 @@ function ppPhaserSample(st, x, p33, hpGain, pfb, fbGain, colorGain, a) {
 	st.r1 = p2 + a * st.r2;
 	return st.r1;
 }
-function ppPhaserCoef(tbl, loKey, hiKey, pos, sr, c8, kl) {
+function phaserCoef(tbl, loKey, hiKey, pos, sr, c8, kl) {
 	var fidx = 128 * pos;
 	var i0 = fidx | 0;
 	var fr = fidx - i0;
@@ -75,7 +75,7 @@ function ppPhaserCoef(tbl, loKey, hiKey, pos, sr, c8, kl) {
 }
 // one-pole smoother in Faust's "si.smooth(tau2pole(0.1))" form: the state is
 // seeded with its target so the effect does not fade in on start
-function ppSmoother(init, pole) {
+function smoother(init, pole) {
 	var s = init;
 	return function (target) {
 		s = (1 - pole) * target + pole * s;
@@ -86,41 +86,41 @@ function ppSmoother(init, pole) {
 class StonePhaserProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
-		this.tbl = ppPhaserTriTable();
-		this.stL = ppPhaserState();
-		this.stR = ppPhaserState();
+		this.tbl = phaserTriTable();
+		this.stL = phaserState();
+		this.stR = phaserState();
 		this.p33 = Math.exp(-6.283185307179586 * 33 / sampleRate);
 		this.hpGain = 0.5 * (1 + this.p33);
 		this.c8 = 2764.6015655503763 / sampleRate; // 2*PI*440 / SR
 		this.kl = 0.05776226504666211; // ln(2)/12
-		this.MIDI_LO_COLOR = ppHzToMidi(80);
-		this.MIDI_HI_COLOR = ppHzToMidi(2200);
-		this.MIDI_LO_PLAIN = ppHzToMidi(300);
-		this.MIDI_HI_PLAIN = ppHzToMidi(6000);
-		var pole = 1 - ppSlew(0.1, sampleRate);
-		// seeded with the parameter defaults (see ppDesc below)
-		this.smLf = ppSmoother(0.2, pole);
-		this.smFb = ppSmoother(0.01 * 0.75, pole);
-		this.smColorFb = ppSmoother(0.01 * 0.75, pole);
-		this.smFbCut = ppSmoother(500, pole);
-		this.smW = ppSmoother(Math.sin(0.5 * Math.PI / 2), pole);
-		this.smD = ppSmoother(Math.cos(0.5 * Math.PI / 2), pole);
-		this.smPhase = ppSmoother(1, pole);
-		this.smLo = ppSmoother(this.MIDI_LO_COLOR, pole);
-		this.smHi = ppSmoother(this.MIDI_HI_COLOR, pole);
+		this.MIDI_LO_COLOR = hzToMidi(80);
+		this.MIDI_HI_COLOR = hzToMidi(2200);
+		this.MIDI_LO_PLAIN = hzToMidi(300);
+		this.MIDI_HI_PLAIN = hzToMidi(6000);
+		var pole = 1 - slew(0.1, sampleRate);
+		// seeded with the parameter defaults (see desc below)
+		this.smLf = smoother(0.2, pole);
+		this.smFb = smoother(0.01 * 0.75, pole);
+		this.smColorFb = smoother(0.01 * 0.75, pole);
+		this.smFbCut = smoother(500, pole);
+		this.smW = smoother(Math.sin(0.5 * Math.PI / 2), pole);
+		this.smD = smoother(Math.cos(0.5 * Math.PI / 2), pole);
+		this.smPhase = smoother(1, pole);
+		this.smLo = smoother(this.MIDI_LO_COLOR, pole);
+		this.smHi = smoother(this.MIDI_HI_COLOR, pole);
 		this.phaseL = 0;
 		this.phaseR = 0;
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
-		var fb = ppv(parameters.feedback, 0);
-		var mix = ppv(parameters.mix, 0);
-		var fbCut = ppv(parameters.feedbackBassCut, 0);
-		var color = ppv(parameters.color, 0) >= 0.5;
-		var phase = ppv(parameters.phase, 0);
+		var fb = paramAt(parameters.feedback, 0);
+		var mix = paramAt(parameters.mix, 0);
+		var fbCut = paramAt(parameters.feedbackBassCut, 0);
+		var color = paramAt(parameters.color, 0) >= 0.5;
+		var phase = paramAt(parameters.phase, 0);
 		// block-constant targets, smoothed per sample below
-		var tgtLf = ppv(parameters.speed, 0);
+		var tgtLf = paramAt(parameters.speed, 0);
 		var tgtFb = 0.01 * fb;
 		var tgtMixF = mix * Math.PI / 2;
 		var tgtW = Math.sin(tgtMixF);
@@ -149,21 +149,21 @@ class StonePhaserProcessor extends AudioWorkletProcessor {
 			if (this.phaseL >= 1) this.phaseL -= Math.floor(this.phaseL);
 			var phR = this.phaseL + this.smPhase(tgtPhase);
 			phR -= Math.floor(phR);
-			var aL = ppPhaserCoef(tbl, loKey, hiKey, this.phaseL, sampleRate, c8, kl);
-			var aR = ppPhaserCoef(tbl, loKey, hiKey, phR, sampleRate, c8, kl);
+			var aL = phaserCoef(tbl, loKey, hiKey, this.phaseL, sampleRate, c8, kl);
+			var aR = phaserCoef(tbl, loKey, hiKey, phR, sampleRate, c8, kl);
 			var xL = s.inL[i];
-			var yL = ppPhaserSample(this.stL, xL, p33, hpGain, pfb, fbGain, colorGain, aL);
+			var yL = phaserSample(this.stL, xL, p33, hpGain, pfb, fbGain, colorGain, aL);
 			s.outL[i] = xL * d + yL * w;
 			if (s.outR) {
 				var xR = s.inR[i];
-				var yR = ppPhaserSample(this.stR, xR, p33, hpGain, pfb, fbGain, colorGain, aR);
+				var yR = phaserSample(this.stR, xR, p33, hpGain, pfb, fbGain, colorGain, aR);
 				s.outR[i] = xR * d + yR * w;
 			}
 		}
 		return true;
 	}
 }
-StonePhaserProcessor.parameterDescriptors = ppDesc([
+StonePhaserProcessor.parameterDescriptors = desc([
 	['speed', 0.2, 0.01, 5],
 	['feedback', 0.75, 0, 0.99],
 	['feedbackBassCut', 500, 10, 5000],

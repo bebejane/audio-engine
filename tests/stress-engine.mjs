@@ -167,6 +167,24 @@ await phase('parameter storm', async () => {
 	check('parameter storm survived', true);
 });
 
+// 3b. channel EQ churn -----------------------------------------------------
+await phase('eq churn', async () => {
+	const rnd = mulberry(0x1234abcd);
+	for (let pass = 0; pass < 60; pass++) {
+		for (let i = 0; i < COLUMNS; i++) {
+			const id = 'c' + i;
+			engine.eq(id, 0, { on: rnd() > 0.5, type: 'lowshelf', frequency: 40 + rnd() * 300, gain: (rnd() - 0.5) * 24, q: 0.7 });
+			engine.eq(id, 2, { on: rnd() > 0.5, type: 'peaking', frequency: 400 + rnd() * 6000, gain: (rnd() - 0.5) * 24, q: 0.1 + rnd() * 5 });
+		}
+	}
+	const all = engine.eq('c0');
+	check('eq() returns 4 bands', Array.isArray(all) && all.length === 4, `len=${Array.isArray(all) ? all.length : 'n/a'}`);
+	const b0 = engine.eq('c0', 0);
+	check('eq(band) returns one band', !!b0 && typeof b0.frequency === 'number', String(b0));
+	check('eq ignores out-of-range band', engine.eq('c0', 9) === undefined, `got ${engine.eq('c0', 9)}`);
+	check('eq clamps out-of-range gain', Math.abs(engine.eq('c1', 0, { gain: 999 }).gain) === 18, `gain=${engine.eq('c1', 0).gain}`);
+});
+
 // 4. effect catalog churn --------------------------------------------------
 await phase('effect churn', async () => {
 	// every effect on one sound, both bypassed and active

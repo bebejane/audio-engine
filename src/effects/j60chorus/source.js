@@ -40,7 +40,7 @@ var J60_OUT = {
 
 // Discretize one analog spec (BBD::compute_filter) into an N-row table of
 // complex gains G, plus the discretized poles and the real feedback term H.
-function ppBbdComplexFilter(spec, fs, N) {
+function bbdComplexFilter(spec, fs, N) {
 	var M = spec.M;
 	var ts = 1 / fs;
 	var Pre = new Float64Array(M), Pim = new Float64Array(M);
@@ -86,7 +86,7 @@ function ppBbdComplexFilter(spec, fs, N) {
 }
 
 // Interpolate the G table row for a fractional clock phase (interpolate_G).
-function ppBbdInterpG(f, d, outRe, outIm) {
+function bbdInterpG(f, d, outRe, outIm) {
 	var M = f.M, N = f.N;
 	var row = d * (N - 1);
 	var r1 = row | 0;
@@ -103,9 +103,9 @@ function ppBbdInterpG(f, d, outRe, outIm) {
 // One BBD line (bbd_line.cpp process_single): 256 stages, alternating between
 // storing a charge through the input filter and reading the charge delta
 // through the output filter. process(x, fclk) with fclk = Fclk/Fs.
-function ppBbdLine(fs, ns) {
-	var fin = ppBbdComplexFilter(J60_IN, fs, 128);
-	var fout = ppBbdComplexFilter(J60_OUT, fs, 128);
+function bbdLine(fs, ns) {
+	var fin = bbdComplexFilter(J60_IN, fs, 128);
+	var fout = bbdComplexFilter(J60_OUT, fs, 128);
 	var Min = fin.M, Mout = fout.M;
 	var mem = new Float64Array(ns);
 	var imem = 0, pclk = 0, ptick = 0, ybbdOld = 0;
@@ -129,7 +129,7 @@ function ppBbdLine(fs, ns) {
 				var d = (1 - pclkOld + tick) * (1 / fclk);
 				d -= d | 0;
 				if ((ptick & 1) === 0) {
-					ppBbdInterpG(fin, d, GinRe, GinIm);
+					bbdInterpG(fin, d, GinRe, GinIm);
 					var sRe = 0, sIm = 0;
 					for (m = 0; m < Min; m++) {
 						sRe += GinRe[m] * XinRe[m] - GinIm[m] * XinIm[m];
@@ -138,7 +138,7 @@ function ppBbdLine(fs, ns) {
 					mem[imem] = sRe;
 					imem = imem + 1 < ns ? imem + 1 : 0;
 				} else {
-					ppBbdInterpG(fout, d, GoutRe, GoutIm);
+					bbdInterpG(fout, d, GoutRe, GoutIm);
 					var ybbd = mem[imem];
 					var delta = ybbd - ybbdOld;
 					ybbdOld = ybbd;
@@ -172,13 +172,13 @@ function ppBbdLine(fs, ns) {
 // instead of ramping up from zero (the reference resets them to 0, which makes
 // the first 100 ms sweep the delay up from 0 and is audible as a whoosh when an
 // effect is dropped into a running mix); the enabled flag still fades in.
-function ppJ60ChorusState(fs) {
+function j60ChorusState(fs) {
 	var p = Math.exp(-10 / fs); // fConst1: 100 ms one-pole pole
 	var om = 1 - p; // fConst2
 	var invSr = 1 / fs; // fConst3
 	var NS = 256;
-	var lineL = ppBbdLine(fs, NS);
-	var lineR = ppBbdLine(fs, NS);
+	var lineL = bbdLine(fs, NS);
+	var lineR = bbdLine(fs, NS);
 	var seeded = false;
 	var enabled = 0;
 	var dMinL = 0, dMaxL = 0, shape = 0, rate = 0, phL = 0, phR = 0;
@@ -234,15 +234,15 @@ function ppJ60ChorusState(fs) {
 class J60ChorusProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
-		this.st = ppJ60ChorusState(sampleRate);
+		this.st = j60ChorusState(sampleRate);
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
-		var ci = ppv(parameters.chorusI, 0) >= 0.5 ? 1 : 0;
-		var cii = ppv(parameters.chorusII, 0) >= 0.5 ? 1 : 0;
+		var ci = paramAt(parameters.chorusI, 0) >= 0.5 ? 1 : 0;
+		var cii = paramAt(parameters.chorusII, 0) >= 0.5 ? 1 : 0;
 		var mode = ci | (cii << 1);
-		var mix = ppv(parameters.mix, 0);
+		var mix = paramAt(parameters.mix, 0);
 		var i;
 		for (i = 0; i < s.n; i++) {
 			// Juno 60 signal path: mono into the chorus, stereo out
@@ -253,7 +253,7 @@ class J60ChorusProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-J60ChorusProcessor.parameterDescriptors = ppDesc([
+J60ChorusProcessor.parameterDescriptors = desc([
 	['chorusI', 0, 0, 1],
 	['chorusII', 1, 0, 1],
 	['mix', 1, 0, 1],

@@ -2,6 +2,7 @@ import { arrayMoveImmutable, reverse, slice } from './utils';
 import { EventEmitter } from 'events';
 import { ensureEffectsWorklet } from './effects/worklet';
 import type { Effect, EffectDefaults } from './effects/core';
+import type { EqBand, EqBandOptions } from './types';
 import type AudioEngine from './audioengine';
 
 /** Options accepted by Sound.play() (callers may pass extras via the index sig). */
@@ -112,6 +113,21 @@ const defaults: SoundDefaults = {
 	elapsed: 0,
 	error: null,
 };
+
+/** Valid band types (RBJ shapes). */
+const EQ_TYPES = ['lowshelf', 'peaking', 'highshelf', 'lowpass', 'highpass'];
+/** Clamp a possibly-NaN number into [lo, hi]. */
+const clampNumber = (v: unknown, lo: number, hi: number): number => {
+	const n = Number(v);
+	return Math.max(lo, Math.min(hi, Number.isFinite(n) ? n : 0));
+};
+/** Fresh flat 4-band EQ (matches the channel processor's defaults). */
+const defaultEq = (): EqBand[] => [
+	{ on: false, type: 'lowshelf', frequency: 100, gain: 0, q: 0.7 },
+	{ on: false, type: 'peaking', frequency: 300, gain: 0, q: 0.7 },
+	{ on: false, type: 'peaking', frequency: 2000, gain: 0, q: 0.7 },
+	{ on: false, type: 'highshelf', frequency: 6000, gain: 0, q: 0.7 },
+];
 
 // State events that can change the effect chain. `effects` is only included in
 // the state payload for these, so the many scalar writes (volume/pan/mute/
@@ -224,6 +240,8 @@ class Sound extends EventEmitter {
 	_id: string;
 	/** Whether the current playback reports `elapsed` (enableElapsed or play opt). */
 	_emitElapsed: boolean;
+	/** 4-band channel EQ (band 0..3); flat (all off) by default. */
+	_eq: EqBand[];
 
 	constructor(
 		id: string,
@@ -285,6 +303,9 @@ class Sound extends EventEmitter {
 		this._channelNodePending = false;
 		this._channelNodeFailed = false;
 		this._emitElapsed = false;
+		// 4-band channel EQ (flat by default; may come from a loaded model)
+		this._eq = defaultEq();
+		if (Array.isArray(opt.eq)) this._applyEqConfig(opt.eq);
 		this.source = null;
 		this.effectsInputNode = this.context.createGain();
 		this.effectsOutputNode = this.context.createGain();
@@ -729,6 +750,83 @@ class Sound extends EventEmitter {
 		if (this._channelNode) this._channelNode.port.postMessage({ type: 'stop' });
 	}
 
+	/**
+	 * Get or set the 4-band channel EQ (applied in the channel processor, after
+	 * the effects and before the panner).
+	 *
+	 * - `eq()` → all four bands (a copy).
+	 * - `eq(band)` → one band.
+	 * - `eq(band, options)` → merge the given fields into one band and return it.
+	 *
+	 * Bands are 0–3; frequencies are Hz (20–20000), gain in dB (±18), Q 0.1–10,
+	 * and `type` is one of lowshelf/peaking/highshelf/lowpass/highpass. Enabling
+	 * a band lazily creates the channel node if needed.
+	 */
+	eq(band?: number, options?: EqBandOptions): EqBand | EqBand[] | undefined {
+		if (band === undefined) return this._eq.map((b) => ({ ...b }));
+		if (!(band >= 0 && band < 4)) return undefined;
+		const b = this._eq[band];
+		if (options === undefined) return { ...b };
+
+		if (options.on !== undefined) b.on = !!options.on;
+		if (options.type !== undefined && EQ_TYPES.indexOf(options.type) > -1) b.type = options.type;
+		if (options.frequency !== undefined) b.frequency = clampNumber(options.frequency, 20, 20000);
+		if (options.gain !== undefined) b.gain = clampNumber(options.gain, -18, 18);
+		if (options.q !== undefined) b.q = clampNumber(options.q, 0.1, 10);
+
+		this._sendEqBand(band);
+		// enabling a band (or moving it) needs the channel node in the chain even
+		// when the sound neither loops nor reports elapsed
+		if (!this._channelNode) this._ensureChannelNode();
+		this.emit('eq', this.id, band, { ...b });
+		this.emitState('eq');
+		return { ...b };
+	}
+
+	/** Merge a saved EQ config (from a model/preset) into the current bands. */
+	_applyEqConfig(bands: EqBandOptions[]): void {
+		for (let i = 0; i < 4 && i < bands.length; i++) {
+			const src = bands[i];
+			if (!src || typeof src !== 'object') continue;
+			const b = this._eq[i];
+			if (src.on !== undefined) b.on = !!src.on;
+			if (src.type !== undefined && EQ_TYPES.indexOf(src.type) > -1) b.type = src.type;
+			if (src.frequency !== undefined) b.frequency = clampNumber(src.frequency, 20, 20000);
+			if (src.gain !== undefined) b.gain = clampNumber(src.gain, -18, 18);
+			if (src.q !== undefined) b.q = clampNumber(src.q, 0.1, 10);
+		}
+	}
+
+	/** Push the whole 4-band EQ to the channel processor (on creation). */
+	_sendEq(): void {
+		if (!this._channelNode) return;
+		this._channelNode.port.postMessage({
+			type: 'eqAll',
+			bands: this._eq.map((b) => ({
+				on: b.on,
+				type: b.type,
+				frequency: b.frequency,
+				gain: b.gain,
+				q: b.q,
+			})),
+		});
+	}
+
+	/** Push one band to the channel processor. */
+	_sendEqBand(band: number): void {
+		if (!this._channelNode) return;
+		const b = this._eq[band];
+		this._channelNode.port.postMessage({
+			type: 'eq',
+			band,
+			on: b.on,
+			eqType: b.type,
+			frequency: b.frequency,
+			gain: b.gain,
+			q: b.q,
+		});
+	}
+
 	/** Create the channel processor node on demand; re-anchors once it exists. */
 	_ensureChannelNode(): void {
 		if (this._channelNode || this._channelNodeFailed || this._channelNodePending) return;
@@ -758,6 +856,7 @@ class Sound extends EventEmitter {
 					// the channel node
 					if (this._connected) this._connectChain();
 					this._anchorChannel();
+					this._sendEq();
 				} catch (err) {
 					console.error('channel processor wiring failed', err);
 				}
@@ -862,6 +961,9 @@ class Sound extends EventEmitter {
 				// on scalar updates (they merge the payload), and refresh it on
 				// any real chain change
 				...(EFFECT_STATE_EVENTS.has(event) ? { effects: this._currentEffectParams() } : {}),
+				// the EQ array is only carried on `eq` events (kept off the
+				// high-frequency scalar updates)
+				...(event === 'eq' ? { eq: this._eq.map((b) => ({ ...b })) } : {}),
 				error: this._error,
 				_event: event,
 			},
@@ -888,6 +990,7 @@ class Sound extends EventEmitter {
 			pausedAt: this._pausedAt,
 			reversed: this._reversed,
 			effectsEnabled: this._effectsEnabled,
+			eq: this._eq.map((b) => ({ ...b })),
 			effects: this._currentEffectParams(),
 		};
 	}
@@ -923,6 +1026,8 @@ class Sound extends EventEmitter {
 		this.pan(defaults.pan);
 		this.reverse(defaults.reversed);
 		this.lock(defaults.locked);
+		this._eq = defaultEq();
+		this._sendEq();
 		this._emit('reset', this.id);
 	}
 

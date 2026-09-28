@@ -1,18 +1,19 @@
-// Per-sound channel processor: audio-thread loop clock, anti-click fade and
-// elapsed-time reporting (registers `channel`).
+// Per-sound channel processor: audio-thread loop clock, anti-click fade,
+// elapsed-time reporting and a 4-band EQ (registers `channel`).
 //
 // It sits in a Sound's chain where the anti-click fade node used to be (after
-// the volume node, before the panner). All three jobs used to be main-thread
-// mechanisms in sound.ts — the loop boundary was a `setInterval` with look-ahead
-// AudioParam scheduling, the elapsed playhead a 30ms `setTimeout`. Timers are
-// never sample accurate and get throttled in background tabs, so they run on
-// the audio thread here instead.
+// the volume node, before the panner), i.e. a channel strip: the EQ is applied
+// here (post-effects, pre-panner), then the anti-click fade gain.
+//
+// The loop clock, fade and elapsed reporting used to be main-thread mechanisms
+// in sound.ts (a `setInterval` with look-ahead AudioParam scheduling, and a
+// 30ms `setTimeout`); timers are not sample accurate and get throttled in
+// background tabs, so they run on the audio thread here.
 //
 // The native AudioBufferSourceNode still does the playback/looping; this
 // processor only shadows its playhead from a `(startTime, startPos, rate, loop)`
-// anchor the Sound re-sends on play / resume / rate / loop change. Position is
-// recomputed from `currentTime` every block (no accumulated drift). When neither
-// looping nor reporting elapsed it is a plain passthrough.
+// anchor re-sent on play / resume / rate / loop change. Position is recomputed
+// from `currentTime` every block (no accumulated drift).
 class ChannelProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
@@ -31,6 +32,12 @@ class ChannelProcessor extends AudioWorkletProcessor {
 		this.emitElapsed = false;
 		this.elapsedPeriod = 0.03; // seconds between `elapsed` messages
 		this.elapsedAccum = 0;
+		// 4-band EQ: targets + smoothed values (`cf/cg/cq`) per band, one biquad
+		// per channel. `eqState` is null until the Sound sends its first config.
+		this.eqState = null;
+		this.eqOn = [false, false, false, false];
+		this.eqL = [rbj(), rbj(), rbj(), rbj()];
+		this.eqR = [rbj(), rbj(), rbj(), rbj()];
 		this.port.onmessage = (e) => this.handle(e.data);
 	}
 
@@ -54,7 +61,42 @@ class ChannelProcessor extends AudioWorkletProcessor {
 			this.rebaseline = true;
 		} else if (d.type === 'stop') {
 			this.active = false;
+		} else if (d.type === 'eqAll') {
+			this.setEqAll(d.bands);
+		} else if (d.type === 'eq') {
+			this.mergeEq(d.band | 0, d);
 		}
+	}
+
+	/** Seed the EQ state from a full 4-band config (or defaults for gaps). */
+	setEqAll(bands) {
+		const next = channelDefaultEq();
+		for (let i = 0; i < 4; i++) {
+			const src = bands && bands[i] ? bands[i] : {};
+			const b = next[i];
+			if (src.on !== undefined) b.on = !!src.on;
+			if (src.type !== undefined) b.type = src.type;
+			if (typeof src.frequency === 'number') b.frequency = src.frequency;
+			if (typeof src.gain === 'number') b.gain = src.gain;
+			if (typeof src.q === 'number') b.q = src.q;
+			// start smoothing from the target so the first block is already right
+			b.cf = b.frequency;
+			b.cg = b.gain;
+			b.cq = b.q;
+		}
+		this.eqState = next;
+	}
+
+	/** Apply a partial update to one band. */
+	mergeEq(band, d) {
+		if (!this.eqState) this.setEqAll(null);
+		if (band < 0 || band > 3) return;
+		const b = this.eqState[band];
+		if (d.on !== undefined) b.on = !!d.on;
+		if (d.eqType !== undefined) b.type = d.eqType;
+		if (typeof d.frequency === 'number') b.frequency = d.frequency;
+		if (typeof d.gain === 'number') b.gain = d.gain;
+		if (typeof d.q === 'number') b.q = d.q;
 	}
 
 	process(inputs, outputs) {
@@ -69,6 +111,25 @@ class ChannelProcessor extends AudioWorkletProcessor {
 		var len = this.loopEnd - this.loopStart;
 		var looping = this.active && this.loop && len > 0 && this.rate > 0;
 
+		// --- EQ: smooth parameters + refresh coefficients once per block ------
+		var eqActive = false;
+		if (this.eqState) {
+			var sm = 1 - Math.exp(-n / (sampleRate * EQ_SMOOTH_SEC));
+			for (var bi = 0; bi < 4; bi++) {
+				var s = this.eqState[bi];
+				s.cf += (s.frequency - s.cf) * sm;
+				s.cg += (s.gain - s.cg) * sm;
+				s.cq += (s.q - s.cq) * sm;
+				// a shelf/peak with ~0 dB is a no-op; LP/HP filter regardless
+				var on =
+					s.on && (s.type === 'lowpass' || s.type === 'highpass' || Math.abs(s.cg) > 0.005);
+				this.eqOn[bi] = on;
+				if (on) eqActive = true;
+				this.eqL[bi].set(s.type, sampleRate, s.cf, s.cq, s.cg);
+				this.eqR[bi].set(s.type, sampleRate, s.cf, s.cq, s.cg);
+			}
+		}
+
 		// playhead at the start of this block, in buffer seconds (raw). `u` is
 		// its distance from loopStart, used for the fade/wrap math.
 		var elapsedSec = this.startPos + (currentTime - this.startTime) * this.rate;
@@ -81,9 +142,18 @@ class ChannelProcessor extends AudioWorkletProcessor {
 		var fadeFrames = this.fadeDur * sampleRate;
 		var step = this.rate / sampleRate;
 		var fadeActive = looping && len / this.rate >= this.fadeDur * 3;
-		var i, g, l;
+		var i, g, l, r;
 
 		for (i = 0; i < n; i++) {
+			l = inL ? inL[i] : 0;
+			r = inR ? inR[i] : l;
+			if (eqActive) {
+				for (var bj = 0; bj < 4; bj++) {
+					if (!this.eqOn[bj]) continue;
+					l = this.eqL[bj].process(l);
+					r = this.eqR[bj].process(r);
+				}
+			}
 			if (looping) {
 				g = 1;
 				// intro ramp covers the click at (re)start
@@ -100,11 +170,10 @@ class ChannelProcessor extends AudioWorkletProcessor {
 			} else {
 				// release the anti-click gain back to unity after a stop, and
 				// keep a non-looping channel at unity
-				this.gain += (1 - this.gain) * PP_CHANNEL_RELEASE;
+				this.gain += (1 - this.gain) * CHANNEL_RELEASE;
 			}
-			l = inL ? inL[i] : 0;
 			outL[i] = l * this.gain;
-			if (outR) outR[i] = (inR ? inR[i] : l) * this.gain;
+			if (outR) outR[i] = r * this.gain;
 		}
 
 		if (this.active) {
@@ -131,5 +200,16 @@ class ChannelProcessor extends AudioWorkletProcessor {
 	}
 }
 // ~10ms one-pole release for the anti-click gain (the old `setTargetAtTime(1)`)
-var PP_CHANNEL_RELEASE = 1 - Math.exp(-1 / (0.01 * sampleRate));
+var CHANNEL_RELEASE = 1 - Math.exp(-1 / (0.01 * sampleRate));
+// ~20ms one-pole smoothing for EQ parameter changes (per block)
+var EQ_SMOOTH_SEC = 0.02;
+// flat 4-band defaults: low shelf / two bells / high shelf, all off
+function channelDefaultEq() {
+	return [
+		{ on: false, type: 'lowshelf', frequency: 100, gain: 0, q: 0.7, cf: 100, cg: 0, cq: 0.7 },
+		{ on: false, type: 'peaking', frequency: 300, gain: 0, q: 0.7, cf: 300, cg: 0, cq: 0.7 },
+		{ on: false, type: 'peaking', frequency: 2000, gain: 0, q: 0.7, cf: 2000, cg: 0, cq: 0.7 },
+		{ on: false, type: 'highshelf', frequency: 6000, gain: 0, q: 0.7, cf: 6000, cg: 0, cq: 0.7 },
+	];
+}
 registerProcessor('channel', ChannelProcessor);

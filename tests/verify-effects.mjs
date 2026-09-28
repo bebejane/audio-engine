@@ -1161,5 +1161,56 @@ console.log('\nchannel');
 	check('elapsed is rate-scaled', !!last && last.value > 0.1, `v=${last ? last.value.toFixed(3) : 'n/a'}`);
 }
 
+// -- channel 4-band EQ -----------------------------------------------------
+console.log('\nchannel EQ');
+{
+	const bands = (b0) => [
+		b0,
+		{ on: false, type: 'peaking', frequency: 300, gain: 0, q: 0.7 },
+		{ on: false, type: 'peaking', frequency: 2000, gain: 0, q: 0.7 },
+		{ on: false, type: 'highshelf', frequency: 6000, gain: 0, q: 0.7 },
+	];
+	const runTone = (proc, freq, blocks) => {
+		const tone = sine(freq, 0.5, blocks * BLOCK);
+		const out = new Float32Array(blocks * BLOCK);
+		for (let b = 0; b < blocks; b++) {
+			const [oL] = proc.run(tone.subarray(b * BLOCK, (b + 1) * BLOCK));
+			out.set(oL, b * BLOCK);
+		}
+		return out;
+	};
+	const peakAmp = (proc, freq) => maxIdx(runTone(proc, freq, 60).subarray(40 * BLOCK)).m;
+
+	// flat (all bands off) = passthrough
+	const flat = makeProc('channel');
+	check('EQ flat = passthrough', Math.abs(peakAmp(flat, 1000) - 0.5) < 0.02, `amp=${peakAmp(flat, 1000).toFixed(3)}`);
+
+	// +12 dB peaking at 1 kHz
+	const eq = makeProc('channel');
+	eq.proc.port.onmessage({
+		data: { type: 'eqAll', bands: bands({ on: true, type: 'peaking', frequency: 1000, gain: 12, q: 1 }) },
+	});
+	const boosted = peakAmp(eq, 1000) / 0.5;
+	check('EQ peak boosts its center ~+12 dB (×3.98)', Math.abs(boosted - 3.98) < 0.3, `gain=${boosted.toFixed(2)}`);
+	const offBand = peakAmp(eq, 100) / 0.5;
+	check('EQ peak leaves other bands ~unity', Math.abs(offBand - 1) < 0.1, `gain=${offBand.toFixed(2)}`);
+
+	// -12 dB low shelf at 100 Hz
+	const shelf = makeProc('channel');
+	shelf.proc.port.onmessage({
+		data: { type: 'eqAll', bands: bands({ on: true, type: 'lowshelf', frequency: 150, gain: -12, q: 0.7 }) },
+	});
+	const lowCut = peakAmp(shelf, 50) / 0.5;
+	check('EQ low shelf cuts lows ~-12 dB (×0.25)', Math.abs(lowCut - 0.25) < 0.06, `gain=${lowCut.toFixed(2)}`);
+	const highPass = peakAmp(shelf, 4000) / 0.5;
+	check('EQ low shelf leaves highs ~unity', Math.abs(highPass - 1) < 0.1, `gain=${highPass.toFixed(2)}`);
+
+	// per-band `eq` message merge (band 2 peak)
+	const merge = makeProc('channel');
+	merge.proc.port.onmessage({ data: { type: 'eq', band: 2, on: true, eqType: 'peaking', frequency: 2000, gain: 12, q: 1 } });
+	const merged = peakAmp(merge, 2000) / 0.5;
+	check('EQ per-band message boosts its band', Math.abs(merged - 3.98) < 0.4, `gain=${merged.toFixed(2)}`);
+}
+
 console.log('\n' + (failures === 0 ? 'ALL DSP CHECKS PASSED' : failures + ' CHECKS FAILED'));
 process.exit(failures === 0 ? 0 : 1);

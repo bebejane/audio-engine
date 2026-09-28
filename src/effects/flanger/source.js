@@ -2,19 +2,19 @@ class FlangerProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
 		var maxSamp = Math.ceil(sampleRate * 0.05);
-		this.dlyL = ppDelayLine(maxSamp);
-		this.dlyR = ppDelayLine(maxSamp);
+		this.dlyL = delayLine(maxSamp);
+		this.dlyR = delayLine(maxSamp);
 		this.frame = 0;
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
-		var time = ppv(parameters.time, 0);
-		var speed = ppv(parameters.speed, 0);
-		var depth = ppv(parameters.depth, 0);
-		var fb = ppv(parameters.feedback, 0);
-		var mix = ppv(parameters.mix, 0);
-		var levels = ppMixLevels(mix);
+		var time = paramAt(parameters.time, 0);
+		var speed = paramAt(parameters.speed, 0);
+		var depth = paramAt(parameters.depth, 0);
+		var fb = paramAt(parameters.feedback, 0);
+		var mix = paramAt(parameters.mix, 0);
+		var levels = mixLevels(mix);
 		var base = 0.001 + 0.019 * time;
 		var rate = 0.5 + 4.5 * speed;
 		var dep = 0.0005 + 0.0045 * depth;
@@ -37,5 +37,5 @@ class FlangerProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-FlangerProcessor.parameterDescriptors = ppDesc([['time', 0.45, 0, 1], ['speed', 0.2, 0, 1], ['depth', 0.1, 0, 1], ['feedback', 0.5, 0, 1], ['mix', 0.5, 0, 1]]);
+FlangerProcessor.parameterDescriptors = desc([['time', 0.45, 0, 1], ['speed', 0.2, 0, 1], ['depth', 0.1, 0, 1], ['feedback', 0.5, 0, 1], ['mix', 0.5, 0, 1]]);
 registerProcessor('flanger', FlangerProcessor);

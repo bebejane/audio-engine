@@ -4,12 +4,12 @@ class TremoloProcessor extends AudioWorkletProcessor {
 		this.frame = 0;
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
-		var speed = ppv(parameters.speed, 0);
-		var depth = ppv(parameters.depth, 0);
-		var mix = ppv(parameters.mix, 0);
-		var levels = ppMixLevels(mix);
+		var speed = paramAt(parameters.speed, 0);
+		var depth = paramAt(parameters.depth, 0);
+		var mix = paramAt(parameters.mix, 0);
+		var levels = mixLevels(mix);
 		var i;
 		for (i = 0; i < s.n; i++) {
 			var t0 = this.frame + i;
@@ -21,5 +21,5 @@ class TremoloProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-TremoloProcessor.parameterDescriptors = ppDesc([['speed', 4, 0, 20], ['depth', 0.5, 0, 1], ['mix', 0.5, 0, 1]]);
+TremoloProcessor.parameterDescriptors = desc([['speed', 4, 0, 20], ['depth', 0.5, 0, 1], ['mix', 0.5, 0, 1]]);
 registerProcessor('tremolo', TremoloProcessor);

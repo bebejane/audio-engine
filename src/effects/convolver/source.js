@@ -1,23 +1,23 @@
 class ConvolverProcessor extends AudioWorkletProcessor {
 	constructor() {
 		super();
-		this.convL = ppConvolver();
+		this.convL = convolver();
 		this.convR = null;
 		this.pending = null;
 		this.port.onmessage = function (e) {
 			if (e.data && e.data.type === 'ir') {
 				var ch = e.data.channels || [];
-				if (!this.convR && ch.length > 1) this.convR = ppConvolver();
+				if (!this.convR && ch.length > 1) this.convR = convolver();
 				this.convL.setIr(ch[0] || new Float32Array(1));
 				if (this.convR) this.convR.setIr(ch[1] || ch[0] || new Float32Array(1));
 			}
 		}.bind(this);
 	}
 	process(inputs, outputs, parameters) {
-		var s = ppSetupStereo(inputs, outputs);
+		var s = setupStereo(inputs, outputs);
 		if (!s) return true;
-		var mix = ppv(parameters.mix, 0);
-		var levels = ppMixLevels(mix);
+		var mix = paramAt(parameters.mix, 0);
+		var levels = mixLevels(mix);
 		this.convL.processBlock(s.inL, s.outL);
 		var i;
 		for (i = 0; i < s.n; i++) s.outL[i] = s.inL[i] * levels.dry + s.outL[i] * levels.wet;
@@ -32,5 +32,5 @@ class ConvolverProcessor extends AudioWorkletProcessor {
 		return true;
 	}
 }
-ConvolverProcessor.parameterDescriptors = ppDesc([['mix', 0.5, 0, 1]]);
+ConvolverProcessor.parameterDescriptors = desc([['mix', 0.5, 0, 1]]);
 registerProcessor('convolver', ConvolverProcessor);
