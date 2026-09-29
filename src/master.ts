@@ -17,6 +17,7 @@ export interface MasterState {
 	muted: boolean;
 	playing: boolean;
 	looping: boolean;
+	reversed: boolean;
 	paused: boolean;
 	stopped: boolean;
 	recording: boolean;
@@ -50,6 +51,7 @@ class Master {
 			muted: false,
 			playing: false,
 			looping: false,
+			reversed: false,
 			paused: false,
 			stopped: true,
 			recording: false,
@@ -130,6 +132,22 @@ class Master {
 		return this.state.looping;
 	}
 
+	/**
+	 * Get (no arg) or set the master reverse flag: every sound's buffer is
+	 * flipped in one call (per-sound granular control stays on
+	 * `engine.reverse(id, on)`).
+	 */
+	reverse(on?: boolean) {
+		if (on === undefined) return this.state.reversed;
+
+		this.engine.sounds.forEach((s) => {
+			this.engine.reverse(s.id, on);
+		});
+		this.engine.emit('reverseall', on);
+		this.engine.emitMasterState({ reversed: on });
+		return this.state.reversed;
+	}
+
 	/** Get (no arg) or ramp the master output volume (0–1). */
 	volume(vol?: number) {
 		if (vol === undefined) return this.state.volume;
@@ -137,11 +155,7 @@ class Master {
 		if (!Number.isFinite(next)) return this.state.volume;
 		// smooth like every other level (Sound.volume) instead of a hard
 		// `.value` write, and accept 0 (the old `if (vol)` dropped it)
-		this.engine.masterGain.gain.setTargetAtTime(
-			next,
-			this.engine.context.currentTime,
-			0.02,
-		);
+		this.engine.masterGain.gain.setTargetAtTime(next, this.engine.context.currentTime, 0.02);
 		this.engine._volume = next;
 		this.engine.emit('mastervolume', next);
 		this.engine.emitMasterState({ volume: next });

@@ -762,6 +762,23 @@ console.log('\ndistortion');
 	check('gain=1 => hotter/nonzero', p1 > p0 && p1 > 0.3, `peak=${p1.toFixed(3)}`);
 }
 
+// -- gain ---------------------------------------------------------------
+console.log('\ngain');
+{
+	const s = sine(220, 0.5, BLOCK * 4);
+	const run = (db) => {
+		const d = makeProc('gain', { gain: db });
+		for (let b = 0; b < 4; b++) d.run(s.subarray(b * BLOCK, (b + 1) * BLOCK));
+		return maxIdx(d.drain().L).m;
+	};
+	const unity = run(0);
+	const half = run(-6.0206);
+	const boost = run(12);
+	check('0 dB is unity', Math.abs(unity - 0.5) < 0.005, `peak=${unity.toFixed(4)}`);
+	check('-6 dB halves', Math.abs(half - 0.25) < 0.005, `peak=${half.toFixed(4)}`);
+	check('+12 dB ~ x3.98', Math.abs(boost - 0.5 * Math.pow(10, 0.6)) < 0.01, `peak=${boost.toFixed(4)}`);
+}
+
 // -- compressor ---------------------------------------------------------
 console.log('\ncompressor');
 {
@@ -982,7 +999,9 @@ console.log('\ntime sweep (clicks)');
 			const len = 2000 + (b % 5) * 400;
 			const ir = new Float32Array(len);
 			for (let i = 0; i < len; i++) ir[i] = (Math.sin(i * 0.7) * 0.5) * Math.pow(1 - i / len, 2);
-			rv.proc._setIr(ir);
+			// the adapter ships the IR as `{type:'ir', channels}` over the port —
+			// deliver through the same onmessage path the worklet defines
+			rv.proc.port.onmessage({ data: { type: 'ir', channels: [ir] } });
 		}
 		rv.run(drive);
 	}

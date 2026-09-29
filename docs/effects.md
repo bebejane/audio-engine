@@ -109,6 +109,15 @@ and post to the worklet. The dry path stays live until the impulse arrives.
 | `feedback` | `0.5` | `0 … 1` |
 | `mix` | `0.5` | `0 … 1` |
 
+### Gain — `gain`
+
+Plain linear output gain, set in decibels. `0` dB is unity, negative values
+attenuate and positive values boost.
+
+| Param | Default | Range |
+| --- | --- | --- |
+| `gain` | `0` | `-60 … 24` dB |
+
 ### Highpass Filter — `highpassfilter`
 
 | Param | Default | Range |

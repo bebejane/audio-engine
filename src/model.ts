@@ -148,7 +148,9 @@ export default class ModelManager {
 			let zipData = zipContent;
 			if (!zipData) {
 				try {
-					zipData = (await this.loadFile(this.engine.modelsPath + '/' + name + '.zip')) as ArrayBuffer;
+					zipData = (await this.loadFile(
+						this.engine.modelsPath + '/' + name + '.zip',
+					)) as ArrayBuffer;
 				} catch (err) {
 					this.engine.emit('error', err);
 					throw err;
@@ -409,7 +411,7 @@ export default class ModelManager {
 			const id = item.id;
 			if (!this.engine.exist(id)) return;
 			this.engine.pitch(id, Math.round(Math.random() * 24 - 12));
-			this.engine.volume(id, Math.random());
+			this.engine.volume(id, Math.random() * 0.5 + 0.2);
 			this.engine.pan(id, Math.random() * 180 - 90);
 		});
 

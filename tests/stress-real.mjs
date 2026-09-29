@@ -146,7 +146,7 @@ await phase('effect catalog in the graph', async () => {
 	// play through the full chain, then tear it down while playing
 	engine.play('c0');
 	await sleep(300);
-	check('plays through a 20-effect chain', engine.get('c0').sound._playing === true);
+	check('plays through a full-effect chain', engine.get('c0').sound._playing === true);
 
 	let removed = 0;
 	while (engine.get('c0').sound.effects.length) {

@@ -5,8 +5,8 @@
 ```sh
 pnpm install
 pnpm typecheck      # tsc --noEmit
-pnpm test           # offline DSP harness (all 20 effect processors)
-pnpm test:render    # render all 20 effects through a real Web Audio impl
+pnpm test           # offline DSP harness (all 21 effect processors)
+pnpm test:render    # render all 21 effects through a real Web Audio impl
 pnpm test:stress    # engine soak vs the Web Audio mock (virtual clock)
 pnpm test:stress:real  # engine soak vs real web-audio-api (real clock)
 pnpm worklet:gen    # regenerate src/effects/workletsource.generated.ts
@@ -31,7 +31,7 @@ src/                     engine code (TypeScript)
   pitch/                 Signalsmith Stretch loader + vendored .mjs
 scripts/build-effects-worklet.mjs  assembles the worklet source
 tests/verify-effects.mjs           offline DSP regression harness
-tests/render-effects.mjs           all 20 effects through a real Web Audio impl
+tests/render-effects.mjs           all 21 effects through a real Web Audio impl
 tests/stress-engine.mjs            engine soak vs the Web Audio mock (virtual)
 tests/stress-real.mjs              engine soak vs real web-audio-api (wall clock)
 tests/web-audio-api-node.mjs       Node environment for the real-engine lane

@@ -20,7 +20,7 @@ Public entry point: [`src/index.ts`](./src/index.ts).
 pnpm install
 pnpm typecheck      # tsc --noEmit
 pnpm test           # pretest regenerates the worklet, then runs the DSP harness
-pnpm test:render    # render all 20 effects through real web-audio-api offline
+pnpm test:render    # render all 21 effects through real web-audio-api offline
 pnpm test:stress    # engine soak test (real AudioEngine on a mock Web Audio API)
 pnpm test:stress:heavy  # same, wider grid + longer soak
 pnpm test:stress:real   # engine soak on real web-audio-api (wall clock)
@@ -100,7 +100,7 @@ typedoc.json / docs/                documentation
    Do not "fix" it.
 
 7. **`pnpm test` behavior covers DSP, not UI.** It loads the generated worklet
-   source into a shim and runs all 20 processors offline. Run it after any DSP or
+   source into a shim and runs all 21 processors offline. Run it after any DSP or
    effect change. Comments/typing-only edits do not require it, but `pnpm
 typecheck` should always pass.
 

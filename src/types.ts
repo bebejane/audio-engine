@@ -194,6 +194,7 @@ export interface MasterLike {
 	mute(on: boolean): void;
 	muted(): boolean;
 	loop(on?: boolean): Any;
+	reverse(on?: boolean): Any;
 	volume(vol?: number): Any;
 	locked(on?: boolean): Any;
 	reset(): void;

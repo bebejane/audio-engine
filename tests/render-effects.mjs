@@ -191,6 +191,20 @@ console.log('\nD. DSP behaviours (impulse / DC)');
 	check('korg35filter highpass blocks DC (~0)', Math.abs(hp) < 0.02, `dc=${hp.toFixed(3)}`);
 }
 {
+	// gain: dB -> linear multiplier
+	const measure = async (gain) => {
+		const { out } = await renderEffect(
+			EFFECTS.find((e) => e.id === 'gain'),
+			{ input: 'dc', seconds: 1, params: { gain } },
+		);
+		return mean(out.getChannelData(0), SR / 2 - 2000, SR / 2);
+	};
+	const unity = await measure(0);
+	const half = await measure(-6.0206);
+	check('gain 0 dB passes DC (~1)', Math.abs(unity - 1) < 0.02, `dc=${unity.toFixed(3)}`);
+	check('gain -6 dB halves DC (~0.5)', Math.abs(half - 0.5) < 0.02, `dc=${half.toFixed(3)}`);
+}
+{
 	// reverb takes its impulse response over the message port
 	const ctx = new OfflineAudioContext(2, SR, SR);
 	await register(ctx);

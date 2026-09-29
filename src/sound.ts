@@ -279,7 +279,6 @@ class Sound extends EventEmitter {
 	_midiNote: number;
 	_midiMapMode: boolean;
 	_reversed: boolean;
-	_reverse: boolean | undefined;
 	_id: string;
 	/** Whether the current playback reports `elapsed` (enableElapsed or play opt). */
 	_emitElapsed: boolean;
@@ -392,8 +391,10 @@ class Sound extends EventEmitter {
 		this.onEnded = this.onEnded.bind(this);
 	}
 	/**
-	 * Start playback: build a fresh source, connect the chain (unless muted or
-	 * filtered out by solo), apply rate/loop/fades and start the elapsed ticker.
+	 * Start playback: build a fresh source, connect the chain (unless filtered
+	 * out by solo), apply rate/loop/fades and start the elapsed ticker. A muted
+	 * sound is still wired up and runs silently, so unmuting mid-play makes it
+	 * audible from the current position.
 	 *
 	 * No-op until the buffer has loaded. If paused, resumes instead of
 	 * restarting (see {@link pause}).
@@ -445,12 +446,26 @@ class Sound extends EventEmitter {
 		// and a stale value here would place every loop fade one latency early.
 		this._chainDelay = this._pitchEngaged ? this._pitchLatency : 0;
 
-		if (!this._muted && (soloOn ? this._solo : true)) this._connectChain();
+		// Always wire the chain (unless solo-excluded) — muted included. The
+		// source runs silently behind a zeroed volume gain, so unmuting mid-play
+		// makes it audible from the current position instead of leaving it
+		// disconnected. The gain is seeded to its target below, before the
+		// source starts, so a muted start is silent from the first quantum.
+		if (soloOn ? this._solo : true) this._connectChain();
 		// a fresh chain starts fully wet when the shifter is part of it: it is
 		// built before the source starts, so there is no live signal to crossfade
 		if (this._pitchEngaged) this._setPitchMix(1, 0);
 
 		const ct = this.context.currentTime;
+		// Seed the volume node with the current target before the source starts.
+		// While muted it can still hold a stale gain from an earlier unmuted
+		// playback; snapping it to 0 here keeps the connected chain silent and
+		// leaves unmute (which ramps via _applyGain) to fade in mid-play.
+		this.node.gain.cancelScheduledValues(ct);
+		this.node.gain.setValueAtTime(this._targetGain(), ct);
+		// any in-flight splice envelope was just cancelled, so stop blocking
+		// _applyGain on it
+		this._spliceEnds = 0;
 		this._offset = Math.max(0, opt.start || this._pausedAt || this._loopStart || 0);
 		this.source.loop = this._loop;
 		this.source.loopStart = Math.max(0, this._loopStart || this.source.loopStart || 0);
@@ -459,12 +474,16 @@ class Sound extends EventEmitter {
 		this.source.addEventListener('ended', this.onEnded);
 
 		if (opt.volume !== undefined)
-			this.node.gain.setValueAtTime(opt.volume, this.context.currentTime + 0.005); // this.volume(opt.volume)
+			// mute wins over a per-play volume override
+			this.node.gain.setValueAtTime(
+				this._muted ? 0 : opt.volume,
+				this.context.currentTime + 0.005,
+			); // this.volume(opt.volume)
 
 		this.source.start(0, this._offset); //, opt.duration && !this._loop ? opt.duration : this._duration - this._offset);
 
 		if (opt.fadeIn !== undefined && opt.fadeIn !== 0.0)
-			this.fadeIn(opt.fadeIn, opt.fadeType, 0.00001, opt.volume || this._volume);
+			this.fadeIn(opt.fadeIn, opt.fadeType, 0.00001, this._muted ? 0 : opt.volume || this._volume);
 		if (opt.fadeOut !== undefined && opt.fadeOut !== 0.0 && !this._loop)
 			this.fadeOut(opt.fadeOut, opt.fadeType, 0.00001, opt.duration || this._duration);
 
@@ -1047,9 +1066,8 @@ class Sound extends EventEmitter {
 				this._channelNode = node;
 				this._channelNodePending = false;
 				try {
-					// only rewire if a chain is up — a muted-at-start sound
-					// skips _connectChain and must not be connected just for
-					// the channel node
+					// only rewire if a chain is already up (e.g. a solo-excluded
+					// sound never connected)
 					if (this._connected) this._rebuildChain();
 					// the node starts `started: false`, so it fades in regardless
 					this._anchorChannel();
@@ -1562,16 +1580,46 @@ class Sound extends EventEmitter {
 	/**
 	 * Get the reversed flag (no arg) or reverse/un-reverse the decoded buffer in
 	 * place. Bumps the buffer version so cached peaks are invalidated.
+	 *
+	 * A running AudioBufferSourceNode keeps rendering the buffer it was started
+	 * with, so an in-place flip would not be heard until the next play();
+	 * playback is re-triggered from the current playhead so the change is
+	 * audible immediately.
 	 */
 	reverse(on?: boolean): unknown {
-		if (on === undefined) return this._reverse;
+		if (on === undefined) return this._reversed;
 		if (!this.buffer) return;
+		const changed = (on && !this._reversed) || (!on && this._reversed);
 		if (on && !this._reversed) reverse(this.buffer);
 		if (!on && this._reversed) reverse(this.buffer);
 		this._bufferVersion++;
 		this._reversed = on;
 		this._emit('reversed', on);
 		this.emit('change');
+		// swap the live source so the flip is heard without waiting for the next
+		// natural play (see the method doc)
+		if (changed && this.source && this._playing && !this._paused) this._replayFromPosition();
+	}
+
+	/**
+	 * Re-trigger playback from the current playhead. Used when the decoded buffer
+	 * is mutated in place mid-playback (reverse): the running source keeps
+	 * rendering the buffer it started with, so the mutation is otherwise
+	 * inaudible until the next natural play. `play()` rebuilds the source and
+	 * splice-fades the seam so the restart is click-free.
+	 */
+	_replayFromPosition(): void {
+		const now = this.context.currentTime;
+		let pos = (now - this._startedAt) * this._rate + this._offset;
+		if (this._loop && this._loopEnd > this._loopStart) {
+			// keep the playhead inside the loop window (works for negative
+			// values too, unlike a plain % remainder)
+			const span = this._loopEnd - this._loopStart;
+			pos = this._loopStart + ((((pos - this._loopStart) % span) + span) % span);
+		} else if (this._duration > 0) {
+			pos = Math.min(Math.max(0, pos), this._duration);
+		}
+		this.play({ start: Math.max(0, pos), enableElapsed: this._emitElapsed });
 	}
 	/**
 	 * Replace the buffer with the `[start, end)` seconds range (mono, channel 0),

@@ -24,6 +24,7 @@ const EFFECT_TYPES = [
 	'dubdelay',
 	'flanger',
 	'reverb',
+	'gain',
 	'distortion',
 	'compressor',
 	'convolver',
@@ -148,6 +149,47 @@ await phase('transport churn', async () => {
 	check('transport churn survived', true);
 });
 
+// 2b. muted playback keeps running (silent) so unmute resumes mid-play -----
+// Regression: play() used to skip _connectChain while muted, so the source ran
+// with no path to the output and unmuting could never make it audible.
+await phase('muted play still runs', async () => {
+	const sound = engine.soundMap['c0'].sound;
+	engine.mute('c0', true);
+	sound.play();
+	check('muted sound still starts playback', sound._playing === true, `playing=${sound._playing}`);
+	check('muted sound wires the chain', sound._connected === true, `connected=${sound._connected}`);
+	check('muted sound is silent', sound.node.gain.value === 0, `gain=${sound.node.gain.value}`);
+	engine.unmute('c0');
+	check('unmute mid-play ramps the gain up', sound.node.gain.value > 0, `gain=${sound.node.gain.value}`);
+	check('unmute keeps it playing', sound._playing === true, `playing=${sound._playing}`);
+	engine.stop('c0');
+});
+
+// 2c. reversing while playing swaps the live source ------------------------
+// Regression: the running AudioBufferSourceNode kept the buffer it started
+// with, so an in-place flip was inaudible until the next play().
+await phase('reverse takes effect while playing', async () => {
+	const sound = engine.soundMap['c1'].sound;
+	sound.loop(false);
+	const data = sound.buffer.getChannelData(0);
+	const first = data[0];
+	const last = data[data.length - 1];
+	sound.play();
+	const oldSource = sound.source;
+	engine.reverse('c1', true);
+	const head = sound.buffer.getChannelData(0)[0];
+	check('reverse flips the buffer in place', head === last, `head=${head} expected=${last}`);
+	check('reverse swaps the live source', sound.source !== oldSource, 'source unchanged');
+	check('reverse keeps it playing', sound._playing === true, `playing=${sound._playing}`);
+	engine.reverse('c1', false);
+	check(
+		'un-reverse restores the buffer',
+		sound.buffer.getChannelData(0)[0] === first,
+		`head=${sound.buffer.getChannelData(0)[0]} expected=${first}`,
+	);
+	engine.stop('c1');
+});
+
 // 3. parameter storm -------------------------------------------------------
 await phase('parameter storm', async () => {
 	const rnd = mulberry(0x9e3779b9);
@@ -192,8 +234,8 @@ await phase('pitch flatten keeps shifter engaged', async () => {
 
 	sound.pitch(0);
 	sound.play();
-	// play() skips the rebuild while muted/soloed, so force it to observe the
-	// topology decision deterministically
+	// A muted sound now connects too (silent), but force a rebuild anyway so the
+	// topology decision is observed deterministically regardless of solo state
 	sound._connectChain();
 	check('playback at flat starts dry', sound._pitchEngaged === false, `engaged=${sound._pitchEngaged}`);
 	check('playback at flat drops the shifter', disconnects > 0, `disconnects=${disconnects}`);

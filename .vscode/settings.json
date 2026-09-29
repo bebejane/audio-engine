@@ -3,5 +3,6 @@
     "**/.jj": true,
     "node_modules": true,
     ".vscode": true
-  }
+  },
+  "eslint.enable": false
 }

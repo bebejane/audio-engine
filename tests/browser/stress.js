@@ -8,7 +8,7 @@ import AudioEngine from './build/index.js';
 
 const $ = (id) => document.getElementById(id);
 const EFFECT_TYPES = [
-	'delay', 'dubdelay', 'flanger', 'reverb', 'distortion', 'compressor',
+	'delay', 'dubdelay', 'flanger', 'reverb', 'gain', 'distortion', 'compressor',
 	'pingpongdelay', 'tremolo', 'quadrafuzz', 'stereopanner', 'stonephaser',
 	'ringmodulator', 'highpassfilter', 'lowpassfilter', 'magnetictape', 'j60chorus',
 	'korg35filter', 'tapedelay', 'tapesaturation',

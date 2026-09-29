@@ -58,6 +58,12 @@ const EFFECTS: EffectDefinition[] = [
 			mix: {value:0.5, max:1, min:0, type:'float', name:'Mix'}
 		},
 	},{
+		id:'gain',
+		name: 'Gain',
+		defaults:{
+			gain: {value:0, max:24, min:-60, type:'float', name:'Gain (dB)'}
+		},
+	},{
 		id:'highpassfilter',
 		name: 'Highpass Filter',
 		defaults:{
@@ -198,6 +204,7 @@ import Delay from './delay'
 import Distortion from './distortion'
 import DubDelay from './dubdelay'
 import Flanger from './flanger'
+import Gain from './gain'
 import HighPassFilter from './highpassfilter'
 import J60Chorus from './j60chorus'
 import Korg35Filter from './korg35filter'
@@ -234,6 +241,7 @@ const EFFECT_CLASSES: Record<string, EffectCtor> = {
 	dubdelay: DubDelay,
 	flanger: Flanger,
 	reverb: Reverb,
+	gain: Gain,
 	distortion: Distortion,
 	compressor: Compressor,
 	convolver: Convolver,

@@ -22,6 +22,8 @@ export type AnalyserCallback = (data: AnalyserData, options: AnalyserOptions) =>
 /** One analyser per (sound, type), kept across mounts. */
 export interface AnalyserListener {
 	type: string;
+	/** The owning Analyser, so the pump can emit a final frame on settle. */
+	owner: Analyser;
 	analyser: AnalyserNode;
 	options: AnalyserOptions;
 	analysing: boolean;
@@ -116,6 +118,15 @@ function pump(): void {
 				if (settled) {
 					unschedule(listener);
 					listener.paused = true;
+					// A meter's EMA only asymptotes toward silence, so retiring it
+					// at level < 0.5 used to leave a ~1px sliver frozen on screen.
+					// Emit one final zero frame (and reset the state) so it drops
+					// all the way down and restarts cleanly on the next play.
+					if (listener.type === 'volume' && listener.lastValue !== 0) {
+						listener.lastValue = 0;
+						listener.level = 0;
+						listener.owner._end(listener);
+					}
 					return;
 				}
 			}
@@ -327,6 +338,7 @@ class Analyser extends EventEmitter {
 		if (!this._listeners[type]) {
 			this._listeners[type] = {
 				type,
+				owner: this,
 				analyser: this.context.createAnalyser(),
 				options,
 				analysing: false,

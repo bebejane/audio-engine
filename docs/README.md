@@ -18,7 +18,7 @@ The package ships **TypeScript source**; the consumer transpiles it (Next.js:
 | Document | Contents |
 | --- | --- |
 | [Events reference](./events.md) | every engine / master / sound event and its payload |
-| [Effects](./effects.md) | the 19-effect catalog with parameters and ranges |
+| [Effects](./effects.md) | the 21-effect catalog with parameters and ranges |
 | [Models & presets](./models-and-presets.md) | `.zip` format, index.json, preset slots |
 | [Development](./development.md) | typecheck, tests, worklet generation, docs |
 | [API reference](./api/index.html) | generated TypeDoc site (classes, methods, types) |
