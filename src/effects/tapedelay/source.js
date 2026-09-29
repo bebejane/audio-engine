@@ -234,9 +234,11 @@ function tapeDelayState(sr) {
 		for (var ch = 0; ch < 2; ch++) {
 			var x = ch === 0 ? x0 : x1;
 			var line = lines[ch];
-			var y1 = cfg.h1 ? line.read(d1) : 0;
-			var y2 = cfg.h2 ? line.read(d2) : 0;
-			var y3 = cfg.h3 ? line.read(d3) : 0;
+			// `snap`: this line already glides its own motor (`curTimeMs` above),
+			// so the delayLine must not add a second glide on top
+			var y1 = cfg.h1 ? line.read(d1, true) : 0;
+			var y2 = cfg.h2 ? line.read(d2, true) : 0;
+			var y3 = cfg.h3 ? line.read(d3, true) : 0;
 			var sum = y1 + y2 + y3;
 			sum = deEmph[ch].process(sum);
 			sum = bump[ch].process(sum);

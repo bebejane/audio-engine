@@ -48,6 +48,19 @@ export default class ModelManager {
 	model: Model | null = null;
 	/** Saved settings snapshots, one slot per number key (null = empty). */
 	presets: PresetSlot[] = [];
+	/**
+	 * The slot currently being edited, or -1 when none. Set by `restorePreset`
+	 * and `_setPreset`; while it is set, every sound change re-snapshots that
+	 * slot (see `_syncCurrentPreset`), so a restored preset tracks live edits and
+	 * is written back to the model on save.
+	 */
+	currentPreset = -1;
+	/**
+	 * Guard against the sync handler re-entering: restoring a preset applies
+	 * dozens of changes, each of which would otherwise re-snapshot a slot that is
+	 * already being written.
+	 */
+	_syncing = false;
 	/** Full models already unzipped (files carry buffers), keyed by name. */
 	_cache: Record<string, Model> = {};
 
@@ -212,7 +225,9 @@ export default class ModelManager {
 		this.model = model;
 		this._cache[model.name] = model;
 		this.presets = this._normalizeSlots(model.presets);
+		this.currentPreset = -1;
 		this.emit('presets', this.presets);
+		this.emit('currentpreset', this.currentPreset);
 
 		const files = model.files || [];
 		for (let idx = 0; idx < files.length; idx++) {
@@ -288,9 +303,11 @@ export default class ModelManager {
 		this.model = model;
 		this._cache[name] = model;
 		this.presets = this._emptySlots();
+		this.currentPreset = -1;
 		this.models = [...this.models, { name, cols, rows }];
 		this.emit('models', this.models);
 		this.emit('presets', this.presets);
+		this.emit('currentpreset', this.currentPreset);
 		this.emit('model', model);
 		return model;
 	}
@@ -423,44 +440,83 @@ export default class ModelManager {
 		return !!this.presets[index];
 	}
 
-	/** Restore every sound to a saved preset's settings. */
+	/**
+	 * Restore every sound to a saved preset's settings, and make that slot the
+	 * one subsequent edits are written back into (see `currentPreset`).
+	 */
 	restorePreset(index: number) {
 		const preset = this.presets[index];
 		if (!preset) return;
-		preset.sounds.forEach((cfg: PresetSound) => {
-			if (!this.engine.exist(cfg.id)) return;
-			const item = this.engine.get(cfg.id);
-			const sound = item.sound;
-			// unmute first: engine.volume silently skips muted sounds, so the
-			// real mute state is re-applied last
-			this.engine.mute(cfg.id, false);
-			if (cfg.volume !== undefined) this.engine.volume(cfg.id, cfg.volume);
-			if (cfg.rate !== undefined) this.engine.rate(cfg.id, cfg.rate);
-			if (cfg.pitch !== undefined) this.engine.pitch(cfg.id, cfg.pitch);
-			if (cfg.pan !== undefined) this.engine.pan(cfg.id, cfg.pan);
-			if (cfg.eq) cfg.eq.forEach((b, i) => this.engine.eq(cfg.id, i, b));
-			this.engine.loop(cfg.id, !!cfg.loop, { start: cfg.loopStart, end: cfg.loopEnd });
-			if (cfg.reversed !== undefined) this.engine.reverse(cfg.id, !!cfg.reversed);
-			if (cfg.locked !== undefined) this.engine.lock(cfg.id, !!cfg.locked);
-			// effects: enabled flag first, then per-effect bypass/params override
-			if (cfg.effectsEnabled !== undefined && sound.effects && sound.effects.length)
-				cfg.effectsEnabled ? sound.enableEffects() : sound.disableEffects();
-			if (cfg.effects && cfg.effects.length) {
-				cfg.effects.forEach((e: EffectSnapshot) => {
-					if (!sound.effects || !sound.effects[e.idx]) return;
-					sound.effectBypass(e.idx, !!e.bypassed);
-					if (e.params) sound.effectParams(e.idx, e.params);
-				});
-			}
-			this.engine.mute(cfg.id, !!cfg.muted);
-		});
+		this.currentPreset = index;
+		// applying the preset fires a `state` event per changed parameter; suppress
+		// the live sync while we do it, or each write re-snapshots the slot
+		this._syncing = true;
+		try {
+			preset.sounds.forEach((cfg: PresetSound) => {
+				if (!this.engine.exist(cfg.id)) return;
+				const item = this.engine.get(cfg.id);
+				const sound = item.sound;
+				// unmute first: engine.volume silently skips muted sounds, so the
+				// real mute state is re-applied last
+				this.engine.mute(cfg.id, false);
+				if (cfg.volume !== undefined) this.engine.volume(cfg.id, cfg.volume);
+				if (cfg.rate !== undefined) this.engine.rate(cfg.id, cfg.rate);
+				if (cfg.pitch !== undefined) this.engine.pitch(cfg.id, cfg.pitch);
+				if (cfg.pan !== undefined) this.engine.pan(cfg.id, cfg.pan);
+				if (cfg.eq) cfg.eq.forEach((b, i) => this.engine.eq(cfg.id, i, b));
+				this.engine.loop(cfg.id, !!cfg.loop, { start: cfg.loopStart, end: cfg.loopEnd });
+				if (cfg.reversed !== undefined) this.engine.reverse(cfg.id, !!cfg.reversed);
+				if (cfg.locked !== undefined) this.engine.lock(cfg.id, !!cfg.locked);
+				// effects: enabled flag first, then per-effect bypass/params override
+				if (cfg.effectsEnabled !== undefined && sound.effects && sound.effects.length)
+					cfg.effectsEnabled ? sound.enableEffects() : sound.disableEffects();
+				if (cfg.effects && cfg.effects.length) {
+					cfg.effects.forEach((e: EffectSnapshot) => {
+						if (!sound.effects || !sound.effects[e.idx]) return;
+						sound.effectBypass(e.idx, !!e.bypassed);
+						if (e.params) sound.effectParams(e.idx, e.params);
+					});
+				}
+				this.engine.mute(cfg.id, !!cfg.muted);
+			});
+		} finally {
+			this._syncing = false;
+		}
+		this.emit('currentpreset', this.currentPreset);
 		this.engine.master.play();
+	}
+
+	/**
+	 * Re-snapshot every sound into the slot being edited, so a restored preset
+	 * follows live edits. No-op unless a slot is being edited (see
+	 * `currentPreset`) or a restore is in flight.
+	 *
+	 * Wired to the engine's per-sound `state` event, so any tracked parameter
+	 * change (volume/rate/pitch/pan/eq/loop/reverse/lock/mute/effects) is
+	 * captured. The `at` stamp is left alone — it records when the slot was
+	 * first created, not when it was last touched.
+	 */
+	_syncCurrentPreset(): void {
+		if (this._syncing || this.currentPreset < 0) return;
+		const slot = this.presets[this.currentPreset];
+		if (!slot) return;
+		slot.sounds = this.engine.sounds.map((item: SoundItem) => this._snapshot(item));
+		this.emit('presets', this.presets);
+	}
+
+	/** Stop tracking edits to the current slot (it stays saved, just unlinked). */
+	clearCurrentPreset(): void {
+		if (this.currentPreset < 0) return;
+		this.currentPreset = -1;
+		this.emit('currentpreset', this.currentPreset);
 	}
 
 	/** Empty every preset slot and emit the new list. */
 	clearPresets() {
 		this.presets = this._emptySlots();
+		this.currentPreset = -1;
 		this.emit('presets', this.presets);
+		this.emit('currentpreset', this.currentPreset);
 	}
 
 	/** Index of the first empty preset slot, or -1 when all are taken. */
@@ -502,7 +558,11 @@ export default class ModelManager {
 		const slots = this._normalizeSlots(this.presets);
 		slots[index] = preset;
 		this.presets = slots;
+		// a freshly written slot becomes the one being edited, so subsequent
+		// changes keep it current (see currentPreset)
+		this.currentPreset = index;
 		this.emit('presets', this.presets);
+		this.emit('currentpreset', this.currentPreset);
 		return preset;
 	}
 }

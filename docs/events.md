@@ -71,6 +71,7 @@
 | `models` | `ModelMeta[]` | The model index loaded/changed. |
 | `model` | `Model` | The current model changed. |
 | `presets` | `PresetSlot[]` | The preset slots changed. |
+| `currentpreset` | `number` | The slot being edited changed (`-1` = none). See [Models & presets](./models-and-presets.md#editing-a-preset-live). |
 | `notification` | `{ message, description } \| null` | Transient UI message (download %, extracting…). |
 | `error` | `(error)` | An engine-level error (model fetch/decode, recorder). |
 

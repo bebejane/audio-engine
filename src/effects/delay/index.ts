@@ -39,7 +39,7 @@ export default class Delay extends Effect {
 		return this.options.time
 	}
 	set time(time: number) {
-		if (!isInRange(time, 0, 180) && this.options.time !== time) return
+		if (!isInRange(time, 0, 2) && this.options.time !== time) return
 		const p = this.node.parameters.get('time')
 		const ct = this.context.currentTime
 		p.cancelScheduledValues(ct)

@@ -95,3 +95,34 @@ and then the per-effect chain (enabled flag → per-effect bypass/params), and
 re-applies mute last (the engine's `volume()` skips muted sounds, so mute must
 come after the level writes). The preset list is persisted inside the model's
 `index.json`, so saving a model also saves its presets.
+
+### Editing a preset live
+
+Presets are **not** frozen snapshots. Writing a slot (`savePreset`,
+`randomizePreset`) or recalling one (`restorePreset`) makes it the *current*
+slot, and from then on every change to any sound is written straight back into
+it — so a recalled preset behaves like a live preset and is persisted with the
+model on the next `saveModel()`.
+
+```ts
+engine.restorePreset(2);
+engine.currentPreset;           // 2 — the slot being edited
+engine.volume('0-0', 0.4);      // also updates presets[2] in place
+await engine.saveModel();       // the edit is now in the .zip
+
+engine.clearCurrentPreset();    // stop tracking; the slot keeps its contents
+```
+
+- `engine.currentPreset` is the slot being edited, or `-1` when none.
+- Tracking starts on any slot write/recall and is cleared by
+  `clearCurrentPreset()`, `clearPresets()`, and by loading/creating a model
+  (`populate`/`createModel`), since those replace the whole slot list.
+- Changes are captured by re-snapshotting from the engine's per-sound `state`
+  event, so every parameter `restorePreset` understands is tracked:
+  volume/rate/pitch/pan/eq/loop/reverse/lock/mute and the effect chain.
+- A preset only touches (and only snapshots) sounds whose ids still exist, so
+  edits to sounds added *after* the preset was taken are not captured.
+- `at` is the slot's creation time and is **not** refreshed by edits; it records
+  when the preset was first made, not when it was last changed.
+- The engine emits `currentpreset` (the new index) whenever the current slot
+  changes.

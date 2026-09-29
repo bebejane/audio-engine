@@ -568,6 +568,8 @@ class AudioEngine extends EventEmitter {
 		sound
 			.on('state', (state, updated) => {
 				this.emit('state' + id, state, updated);
+				// keep the slot being edited in sync with live changes
+				this.modelManager._syncCurrentPreset();
 			})
 			.on('effectparams', (id, type, opt) => {
 				this.emit('effectparams', id, type, opt);
@@ -1022,6 +1024,16 @@ class AudioEngine extends EventEmitter {
 	get presets() {
 		return this.modelManager.presets;
 	}
+	/**
+	 * Index of the preset slot currently being edited, or -1 when none.
+	 *
+	 * Set by `restorePreset` and `savePreset`; while it is set, every sound change
+	 * re-snapshots that slot, so a restored preset tracks live edits and is
+	 * written back to the model on save.
+	 */
+	get currentPreset() {
+		return this.modelManager.currentPreset;
+	}
 	/** The currently loaded model, or null before the first load. */
 	get model() {
 		return this.modelManager.model;
@@ -1073,6 +1085,13 @@ class AudioEngine extends EventEmitter {
 	/** Restore every sound to the preset stored in `index`. */
 	restorePreset(index: number) {
 		return this.modelManager.restorePreset(index);
+	}
+	/**
+	 * Stop tracking edits to the current preset slot. The slot keeps its saved
+	 * contents; it just stops following further changes (see `currentPreset`).
+	 */
+	clearCurrentPreset() {
+		return this.modelManager.clearCurrentPreset();
 	}
 	/** Randomize every sound and store the result as a preset (see ModelManager). */
 	randomizePreset(index?: number) {

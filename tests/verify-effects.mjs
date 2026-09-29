@@ -928,6 +928,69 @@ console.log('\npingpongdelay');
 	check('R tap nonzero', r1.m > 0.3, `m=${r1.m.toFixed(3)}`);
 }
 
+// -- time-sweep clicks (all delays + reverb) ----------------------------
+// Sweeping a delay's `time` used to re-point the read offset at an arbitrary
+// place in the buffer, a step discontinuity audible as crackle (worst on the
+// ping-pong, where the jump runs round the feedback path). The reverb had the
+// same symptom from a different cause: swapping the impulse reset the input
+// history and cut the tail to silence. Both are now slewed/crossfaded, so a
+// sweep must not produce a sample-to-sample jump much larger than the signal.
+console.log('\ntime sweep (clicks)');
+{
+	// steady-ish input so there is always a tail to cut or re-point
+	const drive = new Float32Array(BLOCK);
+	for (let i = 0; i < BLOCK; i++) drive[i] = 0.4 * Math.sin((2 * Math.PI * 220 * i) / SR);
+
+	const maxJump = (x, from) => {
+		let m = 0;
+		for (let i = from + 1; i < x.length; i++) {
+			const d = Math.abs(x[i] - x[i - 1]);
+			if (d > m) m = d;
+		}
+		return m;
+	};
+
+	for (const [name, params] of [
+		['delay', { feedback: 0.5, time: 0.2, mix: 0.5 }],
+		['dubdelay', { feedback: 0.5, time: 0.4, mix: 0.5, cutoff: 700 }],
+		['pingpongdelay', { feedback: 0.5, time: 0.3, mix: 0.5 }],
+	]) {
+		const d = makeProc(name, params);
+		// fill the lines first
+		for (let b = 0; b < 200; b++) d.run(drive);
+		// then sweep time hard, sample-accurately (what a mouse drag does)
+		for (let b = 0; b < 200; b++) {
+			d.set('time', 0.1 + 0.5 * ((b % 20) / 20));
+			d.run(drive);
+		}
+		const { L, R } = d.drain();
+		const from = BLOCK * 200;
+		const jump = Math.max(maxJump(L, from), maxJump(R, from));
+		// a 0.4-amplitude sine moves ~0.0125/sample, so a clean sweep stays low;
+		// a re-pointed read jumps to an arbitrary value.
+		check(`${name}: time sweep does not crackle`, jump < 0.1, `maxJump=${jump.toFixed(4)}`);
+	}
+
+	// reverb: rebuild the impulse repeatedly (the time/decay setters both do)
+	const rv = makeProc('reverb', { mix: 0.5 });
+	rv.proc.port.postMessage = (m) => {
+		if (m && m.type === 'ir' && m.channels) rv.proc._pendingIr = m.channels;
+	};
+	for (let b = 0; b < 300; b++) {
+		// swap the IR every few blocks, as a time/decay drag would
+		if (b % 3 === 0) {
+			const len = 2000 + (b % 5) * 400;
+			const ir = new Float32Array(len);
+			for (let i = 0; i < len; i++) ir[i] = (Math.sin(i * 0.7) * 0.5) * Math.pow(1 - i / len, 2);
+			rv.proc._setIr(ir);
+		}
+		rv.run(drive);
+	}
+	const rvOut = rv.drain();
+	const rvJump = maxJump(rvOut.L, BLOCK * 50);
+	check('reverb: impulse swap does not cut the tail', rvJump < 0.15, `maxJump=${rvJump.toFixed(4)}`);
+}
+
 // -- quadrafuzz ---------------------------------------------------------
 console.log('\nquadrafuzz');
 {

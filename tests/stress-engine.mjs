@@ -331,12 +331,44 @@ await phase('automation', async () => {
 // 8. presets + model roundtrip --------------------------------------------
 await phase('presets + model', async () => {
 	engine.createModel('stress', COLUMNS, 1);
-	for (let i = 0; i < COLUMNS; i++) engine.volume('c' + i, (i % 8) / 8);
+	// createModel destroys the previous sounds, so build a grid for the preset
+	// to snapshot
+	for (let i = 0; i < COLUMNS; i++) {
+		engine.add('c' + i, `/audio/loop${i}.wav`, `loop${i}.wav`);
+	}
+	engine.volume('c0', 0.25);
+	await tick(5);
 	const preset = engine.savePreset('stress-preset');
 	check('preset saved', !!preset);
+	check('preset snapshots the sounds', preset.sounds.length === COLUMNS, `got=${preset.sounds.length}`);
+	// a written slot becomes the one being edited (0 = first free slot)
+	check('savePreset marks the slot current', engine.currentPreset === 0, `current=${engine.currentPreset}`);
 	engine.randomizePreset(0);
+	check('randomizePreset marks the slot current', engine.currentPreset === 0, `current=${engine.currentPreset}`);
 	engine.restorePreset(0);
 	check('preset restore survived', true);
+	check('restorePreset marks the slot current', engine.currentPreset === 0, `current=${engine.currentPreset}`);
+
+	// live editing: a change while a slot is current re-snapshots that slot
+	const before = engine.presets[0].sounds.find((s) => s.id === 'c0').volume;
+	engine.volume('c0', 0.123);
+	const after = engine.presets[0].sounds.find((s) => s.id === 'c0').volume;
+	check('live edit updates the current preset', after === 0.123, `${before} -> ${after}`);
+
+	// and that edit must reach the saved model
+	const saved2 = await engine.saveModel();
+	check('edited preset is in the saved model', saved2.model.presets[0].sounds.find((s) => s.id === 'c0').volume === 0.123);
+
+	// clearCurrentPreset stops tracking, leaving the slot's contents intact
+	const kept = engine.presets[0].sounds.find((s) => s.id === 'c0').volume;
+	engine.clearCurrentPreset();
+	check('clearCurrentPreset unlinks', engine.currentPreset === -1, `current=${engine.currentPreset}`);
+	engine.volume('c0', 0.777);
+	check(
+		'unlinked slot stops tracking edits',
+		engine.presets[0].sounds.find((s) => s.id === 'c0').volume === kept,
+		`kept=${kept}`,
+	);
 
 	const saved = await engine.saveModel();
 	check('model serialized to a blob', !!saved && !!saved.blob, String(saved));

@@ -39,7 +39,7 @@ export default class DubDelay extends Effect {
 		return this.options.time
 	}
 	set time(time: number) {
-		if (!isInRange(time, 0, 180)) return
+		if (!isInRange(time, 0, 2)) return
 		this.options.time = time
 		this.node.parameters.get('time').value = time
 	}

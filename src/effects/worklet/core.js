@@ -104,19 +104,38 @@ function rbj() {
 	function reset() { x1 = x2 = y1 = y2 = 0; }
 	return { set: setup, process: process, reset: reset };
 }
-// fractional-delay line
+// fractional-delay line with a slewed read position.
+//
+// `read(d)` glides the read offset toward `d` instead of jumping to it. Jumping
+// re-points into the buffer at an arbitrary place between one sample and the
+// next, which is a step discontinuity in amplitude — audible as a crackle when
+// a `time` parameter is swept (most obvious on the delays, where the same jump
+// also runs round the feedback path). Gliding instead moves the offset by a
+// fraction of a sample per step, so the interpolator stays continuous; the side
+// effect is the tape-style pitch bend you get from a real delay's time knob.
+//
+// 150ms is the long, musical glide. `GLIDE_UNITY` marks "no glide" so callers
+// that genuinely want an instant jump (a reset) still get one by passing it.
+var DELAY_GLIDE_SEC = 0.15;
+var delayGlideCoeff = 1 - Math.exp(-1 / (DELAY_GLIDE_SEC * sampleRate));
 function delayLine(maxSamples) {
 	var size = maxSamples + 1;
 	var buf = new Float32Array(size);
 	var pos = 0;
+	// -1 = not yet seeded: the first read snaps to its target rather than
+	// gliding up from zero (which would otherwise sweep the whole delay range)
+	var cur = -1;
 	function write(x) {
 		buf[pos] = x;
 		pos += 1;
 		if (pos >= size) pos = 0;
 	}
-	function read(d) {
+	function read(d, snap) {
 		if (d < 0) d = 0;
-		var r = pos - d;
+		if (cur < 0 || snap) cur = d;
+		else cur += (d - cur) * delayGlideCoeff;
+		if (cur < 0) cur = 0;
+		var r = pos - cur;
 		var i0 = Math.floor(r);
 		var f = r - i0;
 		var ia = i0 % size;
@@ -191,15 +210,22 @@ function convolver() {
 	var N = 256;
 	var fftT = fft(N);
 	var H = [];
+	// the outgoing impulse while a swap crossfades (see setIr)
+	var Hprev = null;
+	var fade = 1; // 1 = fully on H, 0 = fully on Hprev
+	var fadeStep = 1 / 8; // ~8 blocks (~23ms at 44.1k) old -> new
 	var Xfd = [];
 	var ring = new Float32Array(N);
 	var timeRe = new Float32Array(N);
 	var timeIm = new Float32Array(N);
 	var freqRe = new Float32Array(N);
 	var freqIm = new Float32Array(N);
-	function setIr(ir) {
+	var freqRe2 = new Float32Array(N);
+	var freqIm2 = new Float32Array(N);
+	/** FFT one impulse into a coefficient array set (one entry per block). */
+	function coefficients(ir) {
 		var nBlocks = Math.max(1, Math.ceil(ir.length / block));
-		H = [];
+		var out = [];
 		for (var i = 0; i < nBlocks; i++) {
 			timeRe.fill(0);
 			timeIm.fill(0);
@@ -212,11 +238,26 @@ function convolver() {
 				st[q * 2] = timeRe[q];
 				st[q * 2 + 1] = timeIm[q];
 			}
-			H.push(st);
+			out.push(st);
 		}
-		Xfd = [];
-		for (i = 0; i < nBlocks; i++) Xfd.push(new Float32Array(N * 2));
-		ring.fill(0);
+		return out;
+	}
+	function setIr(ir) {
+		var nextH = coefficients(ir);
+		// Swapping an impulse is not a "reset": the input history (ring + Xfd) is
+		// still valid and must be kept, or the tail is cut to silence mid-stream
+		// (a step on the output = click). Instead crossfade the convolution from
+		// the outgoing coefficients to the new ones over a few blocks.
+		if (H.length) {
+			Hprev = H;
+			fade = 0;
+		}
+		H = nextH;
+		var nBlocks = H.length;
+		// grow the input-history ring only if the new impulse needs more blocks;
+		// never shrink it (that would drop history the fade still needs)
+		while (Xfd.length < nBlocks) Xfd.push(new Float32Array(N * 2));
+		if (!ring.length) ring.fill(0);
 	}
 	function processBlock(inBlock, outBlock) {
 		if (!H.length) {
@@ -236,6 +277,12 @@ function convolver() {
 			Xfd[0][i * 2] = timeRe[i];
 			Xfd[0][i * 2 + 1] = timeIm[i];
 		}
+		var hasFade = Hprev && fade < 1;
+		if (hasFade) {
+			// inactive spectrum of the *new* impulse
+			freqRe2.fill(0);
+			freqIm2.fill(0);
+		}
 		freqRe.fill(0);
 		freqIm.fill(0);
 		for (i = 0; i < H.length; i++) {
@@ -247,6 +294,30 @@ function convolver() {
 				freqRe[j] += a * c - b * d;
 				freqIm[j] += a * d + b * c;
 			}
+		}
+		if (hasFade) {
+			// the outgoing impulse, over the same input history
+			for (i = 0; i < Hprev.length; i++) {
+				var xd2 = Xfd[i];
+				var hp = Hprev[i];
+				for (j = 0; j < N; j++) {
+					var a2 = xd2[j * 2], b2 = xd2[j * 2 + 1];
+					var c2 = hp[j * 2], d2 = hp[j * 2 + 1];
+					freqRe2[j] += a2 * c2 - b2 * d2;
+					freqIm2[j] += a2 * d2 + b2 * c2;
+				}
+			}
+			fftT.transform(freqRe, freqIm, true);
+			fftT.transform(freqRe2, freqIm2, true);
+			// ramp fade 0 -> 1 across the crossfade window
+			fade = Math.min(1, fade + fadeStep);
+			for (i = 0; i < block; i++) {
+				outBlock[i] = freqRe2[block + i] * (1 - fade) + freqRe[block + i] * fade;
+			}
+			if (fade >= 1) {
+				Hprev = null;
+			}
+			return;
 		}
 		fftT.transform(freqRe, freqIm, true);
 		for (i = 0; i < block; i++) outBlock[i] = freqRe[block + i];

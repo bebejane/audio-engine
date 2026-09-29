@@ -338,6 +338,12 @@ export interface AudioEngine extends AudioEngineEvents {
 	models: ModelMeta[];
 	presets: PresetSlot[];
 	model: Model | null;
+	/**
+	 * Index of the preset slot being edited, or -1 when none. While set, every
+	 * sound change re-snapshots that slot, so a restored preset tracks live edits
+	 * and is persisted with the model on save.
+	 */
+	currentPreset: number;
 	loadModels(): Promise<ModelMeta[]>;
 	loadModel(name: string, zipContent?: ArrayBuffer): Promise<Model | undefined>;
 	loadModelFromFile(
@@ -351,6 +357,8 @@ export interface AudioEngine extends AudioEngineEvents {
 	download(blob: Blob, filename: string): void;
 	savePreset(name?: string): Preset;
 	restorePreset(index: number): void;
+	/** Stop tracking edits to the current slot (it keeps its saved contents). */
+	clearCurrentPreset(): void;
 	randomizePreset(index?: number): Preset;
 	hasPreset(index: number): boolean;
 	clearPresets(): void;
