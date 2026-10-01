@@ -190,6 +190,68 @@ await phase('reverse takes effect while playing', async () => {
 	engine.stop('c1');
 });
 
+// 2d. pause/resume must not wedge a looping sound --------------------------
+// Regression: stop() left `_paused` set while clearing `_pausedAt`, so the next
+// play() delegated to pause(false), which no-oped on the falsy position and
+// silently never started playback.
+await phase('loop pause/stop/play recovers', async () => {
+	const sound = engine.soundMap['c2'].sound;
+	sound.loop(false);
+	sound.play();
+	await tick(2);
+	engine.pause('c2', true);
+	check('pause sets the paused flag', sound._paused === true, `paused=${sound._paused}`);
+	engine.stop('c2');
+	check('stop clears the paused flag', sound._paused === false, `paused=${sound._paused}`);
+	engine.play('c2');
+	check('play after pause+stop starts playback', sound._playing === true, `playing=${sound._playing}`);
+
+	// a loop selection must keep the paused position inside the loop window
+	sound.loop(true, { start: 0.1, end: 0.5 });
+	sound.play();
+	engine.pause('c2', true);
+	check(
+		'loop pause keeps a position inside the loop',
+		sound._pausedAt >= 0.1 && sound._pausedAt <= 0.5,
+		`pausedAt=${sound._pausedAt}`,
+	);
+	engine.play('c2');
+	check('loop resumes after a pause', sound._playing === true, `playing=${sound._playing}`);
+	engine.stop('c2');
+});
+
+// 2e. meters ride the channel processor (so the gain fader moves the meter)
+await phase('meters tap the channel processor', async () => {
+	const sound = engine.soundMap['c3'].sound;
+	engine.gain('c3', -3);
+	check('gain pulls up the channel node', !!sound._channelNode, `node=${!!sound._channelNode}`);
+	check(
+		'analysers tap the channel processor',
+		engine.analyserNodeFor('c3') === sound._channelNode,
+		`tapped=${engine.analyserNodeFor('c3') === sound.node ? 'volume node' : 'channel'}`,
+	);
+	// the meter tap must survive a chain rebuild: a blanket channel-node
+	// disconnect used to sever it, killing the meter on the second play
+	const meter = engine.analyse('c3', 'volume', { fftSize: 256 });
+	const noop = () => {};
+	meter.addEventListener('volume', { fftSize: 256 }, noop);
+	check('meter is connected to the channel node', sound._channelNode._connectionCount() >= 2);
+	engine.loop('c3', true);
+	engine.play('c3');
+	await tick(2);
+	engine.stop('c3');
+	engine.play('c3');
+	await tick(2);
+	check(
+		'meter tap survives a stop/play rebuild',
+		sound._channelNode._connectionCount() >= 2,
+		`connections=${sound._channelNode._connectionCount()}`,
+	);
+	meter.removeEventListener('volume', noop);
+	engine.removeAnalyser(meter);
+	engine.stop('c3');
+});
+
 // 3. parameter storm -------------------------------------------------------
 await phase('parameter storm', async () => {
 	const rnd = mulberry(0x9e3779b9);
@@ -197,6 +259,7 @@ await phase('parameter storm', async () => {
 		for (let i = 0; i < COLUMNS; i++) {
 			const id = 'c' + i;
 			engine.volume(id, rnd() * 1.5);
+			engine.gain(id, Math.round(rnd() * 36 - 24));
 			engine.rate(id, 0.25 + rnd() * 3);
 			engine.pitch(id, Math.round((rnd() - 0.5) * 24));
 			engine.pan(id, Math.round((rnd() - 0.5) * 180));

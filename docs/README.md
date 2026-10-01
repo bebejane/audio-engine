@@ -146,7 +146,7 @@ Supporting modules:
 AudioBufferSourceNode
   └─▶ [Signalsmith Stretch]        (lazy; engaged when pitch first leaves 0, until the next play)
         └─▶ [effect 0] ▶ [effect 1] ▶ …   (non-bypassed effects, in order)
-              └─▶ GainNode (volume × (1 + gain), 0 when muted)
+              └─▶ GainNode (volume, 0 when muted)
                     └─▶ GainNode (loop anti-click fade envelope)
                           └─▶ PannerNode
                                 └─▶ engine.masterGain ▶ context.destination

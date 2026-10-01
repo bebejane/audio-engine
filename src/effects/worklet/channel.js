@@ -38,6 +38,11 @@ class ChannelProcessor extends AudioWorkletProcessor {
 		this.emitElapsed = false;
 		this.elapsedPeriod = 0.03; // seconds between `elapsed` messages
 		this.elapsedAccum = 0;
+		// Channel gain trim, in dB (the engine's `gain(id, db)`). Applied after
+		// the EQ and multiplied into the anti-click gain, so the trim never
+		// fights the fades. `gainLin` is the smoothed linear multiplier.
+		this.gainDb = 0;
+		this.gainLin = 1;
 		// 4-band EQ: targets + smoothed values (`cf/cg/cq`) per band, one biquad
 		// per channel. `eqState` is null until the Sound sends its first config.
 		this.eqState = null;
@@ -75,6 +80,8 @@ class ChannelProcessor extends AudioWorkletProcessor {
 		} else if (d.type === 'stop') {
 			this.active = false;
 			this.started = false;
+		} else if (d.type === 'gain') {
+			this.gainDb = typeof d.db === 'number' ? d.db : 0;
 		} else if (d.type === 'eqAll') {
 			this.setEqAll(d.bands);
 		} else if (d.type === 'eq') {
@@ -156,9 +163,14 @@ class ChannelProcessor extends AudioWorkletProcessor {
 		var fadeFrames = this.fadeDur * sampleRate;
 		var step = this.rate / sampleRate;
 		var fadeActive = looping && len / this.rate >= this.fadeDur * 3;
+		// --- gain trim: smoothed linear level toward the dB target ----------
+		var gTarget = Math.pow(10, this.gainDb / 20);
 		var i, g, l, r;
 
 		for (i = 0; i < n; i++) {
+			// per-sample one-pole keeps fader moves zipper-free without
+			// fighting the sample-accurate anti-click envelope
+			this.gainLin += (gTarget - this.gainLin) * GAIN_SMOOTH;
 			l = inL ? inL[i] : 0;
 			r = inR ? inR[i] : l;
 			if (eqActive) {
@@ -197,8 +209,8 @@ class ChannelProcessor extends AudioWorkletProcessor {
 				g = Math.min(g, this.gain + (1 - this.gain) * CHANNEL_RELEASE);
 			}
 			this.gain = g;
-			outL[i] = l * this.gain;
-			if (outR) outR[i] = r * this.gain;
+			outL[i] = l * g * this.gainLin;
+			if (outR) outR[i] = r * g * this.gainLin;
 		}
 
 		if (this.active) {
@@ -227,6 +239,8 @@ class ChannelProcessor extends AudioWorkletProcessor {
 }
 // ~10ms one-pole release for the anti-click gain (the old `setTargetAtTime(1)`)
 var CHANNEL_RELEASE = 1 - Math.exp(-1 / (0.01 * sampleRate));
+// ~20ms one-pole smoothing for the channel gain trim (per sample)
+var GAIN_SMOOTH = 1 - Math.exp(-1 / (0.02 * sampleRate));
 // ~20ms one-pole smoothing for EQ parameter changes (per block)
 var EQ_SMOOTH_SEC = 0.02;
 // flat 4-band defaults: low shelf / two bells / high shelf, all off

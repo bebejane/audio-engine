@@ -223,6 +223,10 @@ export default class ModelManager {
 	 * itself is still rendered by the React layer from the returned model.
 	 */
 	async populate(model: Model) {
+		// reset the master transport: swapping the model mid-playback must not
+		// leave the old playing/paused state lit with no sounds behind it
+		if (this.engine.master.state.playing || this.engine.master.state.paused)
+			this.engine.master.stop();
 		this.engine.destroy();
 		this.model = model;
 		this._cache[model.name] = model;
@@ -462,6 +466,7 @@ export default class ModelManager {
 				// real mute state is re-applied last
 				this.engine.mute(cfg.id, false);
 				if (cfg.volume !== undefined) this.engine.volume(cfg.id, cfg.volume);
+				if (cfg.gain !== undefined) this.engine.gain(cfg.id, cfg.gain);
 				if (cfg.rate !== undefined) this.engine.rate(cfg.id, cfg.rate);
 				if (cfg.pitch !== undefined) this.engine.pitch(cfg.id, cfg.pitch);
 				if (cfg.pan !== undefined) this.engine.pan(cfg.id, cfg.pan);

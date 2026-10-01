@@ -90,7 +90,7 @@ engine.hasPreset(0);            // is the slot occupied?
 engine.clearPresets();          // empty all slots
 ```
 
-`restorePreset` unmutes first, applies volume/rate/pitch/pan/loop/reverse/lock
+`restorePreset` unmutes first, applies volume/gain/rate/pitch/pan/loop/reverse/lock
 and then the per-effect chain (enabled flag → per-effect bypass/params), and
 re-applies mute last (the engine's `volume()` skips muted sounds, so mute must
 come after the level writes). The preset list is persisted inside the model's
@@ -119,7 +119,7 @@ engine.clearCurrentPreset();    // stop tracking; the slot keeps its contents
   (`populate`/`createModel`), since those replace the whole slot list.
 - Changes are captured by re-snapshotting from the engine's per-sound `state`
   event, so every parameter `restorePreset` understands is tracked:
-  volume/rate/pitch/pan/eq/loop/reverse/lock/mute and the effect chain.
+  volume/gain/rate/pitch/pan/eq/loop/reverse/lock/mute and the effect chain.
 - A preset only touches (and only snapshots) sounds whose ids still exist, so
   edits to sounds added *after* the preset was taken are not captured.
 - `at` is the slot's creation time and is **not** refreshed by edits; it records

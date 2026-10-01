@@ -325,6 +325,13 @@ engine.eq(id, 2, { gain: -3 });      // merge a single field
 
 - Bands are `0..3`; types are `lowshelf | peaking | highshelf | lowpass | highpass`.
 - `frequency` 20–20000 Hz, `gain` ±18 dB (ignored by low/highpass), `q` 0.1–10.
+- The processor also applies the per-sound **channel gain trim**, in dB
+  (`engine.gain(id, dB)`, −24 … +24, 0 = unity), after the EQ and before the
+  panner: a post-fade trim that does not fight the volume fader, the mute ramp
+  or the loop anti-click gain (all of which live on the volume node). The trim
+  is smoothed (~20 ms) so fader moves are zipper-free, and a first non-unity
+  set lazily creates the channel node. Serialized by `Sound.getSaveState()`
+  (presets and `.zip` models).
 - Flat (every band off or 0 dB) is bypassed in the DSP, so an unused EQ costs
   nothing; enabling a band lazily creates the channel processor if needed.
 - Serialized by `Sound.getSaveState()` (presets and `.zip` models); a saved

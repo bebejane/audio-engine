@@ -1223,6 +1223,22 @@ console.log('\nchannel');
 	check('events stop after stop', a.msgs.length === before, `n=${a.msgs.length}`);
 	check('gain released to unity after stop', Math.abs(after[40][0] - 1) < 0.02, `g=${after[40][0]}`);
 
+	// channel gain trim (the engine's gain(id, dB)): multiplied into the
+	// anti-click gain, so it scales the whole strip level
+	const trim = make();
+	trim.proc.port.onmessage({ data: { type: 'gain', db: -6.0206 } });
+	const half = trim.run(Math.ceil((SR * 0.4) / BLOCK)); // ~20 time constants
+	const tail = half[half.length - 1][BLOCK - 1];
+	check(
+		'channel trim -6 dB halves',
+		Math.abs(tail - Math.pow(10, -6.0206 / 20)) < 0.01,
+		`g=${tail.toFixed(4)}`,
+	);
+	trim.proc.port.onmessage({ data: { type: 'gain', db: 0 } });
+	const back = trim.run(Math.ceil((SR * 0.4) / BLOCK));
+	const backLast = back[back.length - 1][BLOCK - 1];
+	check('channel trim back to 0 dB is unity', Math.abs(backLast - 1) < 0.02, `g=${backLast.toFixed(4)}`);
+
 	// signal delay (the pitch shifter sits before this node): the fade must follow
 	// the *audible* wrap, which arrives `delay` seconds after the zero-latency
 	// clock reports it. Without compensation the fade would sit one delay late and

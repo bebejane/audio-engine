@@ -67,7 +67,13 @@ class Master {
 		this._clearElapsed();
 		this.engine.sounds.forEach((s) => this.engine.stop(s.id));
 		this.engine.emit('stopall');
-		this.engine.emitMasterState({ stopped: true, playing: true });
+		this.engine.emitMasterState({
+			startedAt: 0,
+			elapsed: 0,
+			stopped: true,
+			playing: false,
+			paused: false,
+		});
 		this._updateDuration();
 	}
 

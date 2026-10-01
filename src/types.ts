@@ -308,6 +308,8 @@ export interface AudioEngine extends AudioEngineEvents {
 	lock(id: string, on?: boolean): Any;
 	reverse(id: string, on: boolean): void;
 	volume(id: string, vol?: number): Any;
+	/** Channel gain trim in dB (−24 … +24; 0 = unity), applied in the channel processor. */
+	gain(id: string, gain?: number): Any;
 	pan(id: string, deg: number): Any;
 	rate(id: string, rate: number): void;
 	/** Tempo-preserving pitch shift, in semitones (0 = original, ±24 = ±2 octaves). */
@@ -403,6 +405,8 @@ export interface EffectSnapshot {
 /** The live settings of a single sound (superset of Sound.getSaveState()). */
 export interface SoundSettings {
 	volume?: number;
+	/** Channel gain trim in dB (−24 … +24; 0 = unity). */
+	gain?: number;
 	rate?: number;
 	/** Tempo-preserving pitch shift in semitones (0 = original). */
 	pitch?: number;

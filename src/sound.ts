@@ -122,6 +122,9 @@ const defaults: SoundDefaults = {
 
 /** Valid band types (RBJ shapes). */
 const EQ_TYPES = ['lowshelf', 'peaking', 'highshelf', 'lowpass', 'highpass'];
+/** Channel gain trim range, in dB (−24 … +24). */
+const MIN_GAIN_DB = -24;
+const MAX_GAIN_DB = 24;
 /** Clamp a possibly-NaN number into [lo, hi]. */
 const clampNumber = (v: unknown, lo: number, hi: number): number => {
 	const n = Number(v);
@@ -270,6 +273,7 @@ class Sound extends EventEmitter {
 	_rate: number;
 	_pitch: number;
 	_volume: number;
+	/** Channel gain trim, in dB (−24 … +12; 0 = unity), applied in the channel processor. */
 	_gain: number;
 	_pan: number;
 	_panWidth: number;
@@ -670,10 +674,17 @@ class Sound extends EventEmitter {
 					this.node.disconnect(this._channelNode);
 				} catch (e) {}
 			}
-			// the channel node may not have been part of the previous chain yet
-			// (created after playback started), so disconnect all its outputs
-			// rather than a specific destination that may not be connected
-			if (this._channelNode) this._channelNode.disconnect();
+			// Detach only the channel processor's audible destination. A blanket
+			// `_channelNode.disconnect()` also severed the per-sound analyser taps
+			// (meters now ride the channel processor), so a stop→play or any chain
+			// rebuild killed the meter for good — the tap is only remade when the
+			// node is replaced. A targeted disconnect throws when the node was
+			// never wired to the panner, hence the try/catch.
+			if (this._channelNode) {
+				try {
+					this._channelNode.disconnect(this.panner);
+				} catch (e) {}
+			}
 			this.panner.disconnect(this.engine.masterGain);
 		}
 		this._connected = false;
@@ -1072,6 +1083,11 @@ class Sound extends EventEmitter {
 					// the node starts `started: false`, so it fades in regardless
 					this._anchorChannel();
 					this._sendEq();
+					this._sendGain();
+					// the meters tap the strip's real level: re-point the per-sound
+					// analysers at the processor (post-EQ, post-gain-trim), the
+					// same re-point a node swap already performs
+					this.engine.setAnalysersNode(this.id, node);
 				} catch (err) {
 					console.error('channel processor wiring failed', err);
 				}
@@ -1114,6 +1130,7 @@ class Sound extends EventEmitter {
 		//if (!this.spillOver) this.effects.filter((e) => !e.bypassed).forEach((e) => e.effect.disconnect())
 
 		this._pausedAt = 0;
+		this._paused = false;
 		this._startedAt = 0;
 		this._playing = false;
 		this._emit('ended');
@@ -1189,6 +1206,7 @@ class Sound extends EventEmitter {
 	getSaveState() {
 		return {
 			volume: this._volume,
+			gain: this._gain || 0,
 			rate: this._rate,
 			pitch: this._pitch,
 			pan: this._pan,
@@ -1243,6 +1261,7 @@ class Sound extends EventEmitter {
 		this.lock(defaults.locked);
 		this._eq = defaultEq();
 		this._sendEq();
+		this._sendGain();
 		this._emit('reset', this.id);
 	}
 
@@ -1268,7 +1287,19 @@ class Sound extends EventEmitter {
 			// stop the loop clock while paused; resume (play) re-anchors it
 			this._stopChannel();
 			if (this.source) {
-				this._pausedAt = this._startedAt ? this.context.currentTime - this._startedAt : 0;
+				// absolute buffer position at `now`, from the same clock the
+				// loop scheduler uses (`_anchorChannel`), wrapped into the loop
+				// window — so a resume lands exactly where it paused, at any
+				// rate and with a loop selection
+				const elapsed = this._startedAt
+					? (this.context.currentTime - this._startedAt) * this._rate
+					: 0;
+				let pos = this._offset + elapsed;
+				if (this._loop && this._loopEnd > this._loopStart) {
+					const span = this._loopEnd - this._loopStart;
+					pos = this._loopStart + ((((pos - this._loopStart) % span) + span) % span);
+				}
+				this._pausedAt = Math.max(0, pos);
 				// detach the source's onended before stopping it: `source.stop()`
 				// fires `ended`, which would leak a synthetic engine 'ended' here
 				// (stopping the channel processor + emitting ended while merely
@@ -1282,13 +1313,17 @@ class Sound extends EventEmitter {
 			}
 			this._paused = true;
 		} else {
+			// resume only if we were actually paused; `play()` delegates here
+			// when it sees `_paused`, so this must always start playback — even
+			// with `_pausedAt === 0` (paused at the very start, or a stop() that
+			// cleared the position), which used to be swallowed silently
+			const wasPaused = this._paused;
 			this._paused = false;
-			if (this._pausedAt) {
-				this.play({
-					start: this._pausedAt,
-				});
+			if (wasPaused) {
+				const start = this._pausedAt;
+				this._pausedAt = 0;
+				this.play({ start });
 			}
-			this._pausedAt = 0;
 		}
 
 		this._emit('pause', this._paused);
@@ -1318,9 +1353,11 @@ class Sound extends EventEmitter {
 		this._emit('muted', on);
 	}
 
-	// effective output gain = volume * (1 + gain), 0 while muted.
+	// effective output gain = the volume fader (0 while muted). The channel
+	// gain trim lives in the channel processor, applied post-fade (after the
+	// EQ), so the two levels don't fight.
 	_targetGain() {
-		return this._muted ? 0 : this._volume * (1 + (this._gain || 0));
+		return this._muted ? 0 : this._volume;
 	}
 	// state-based smoothing: repeated calls just move the target, so fast
 	// parameter updates (mouse moves) converge without zipper noise
@@ -1342,12 +1379,31 @@ class Sound extends EventEmitter {
 		this._emit('volume', this._volume);
 		return this._volume;
 	}
-	/** Get (no arg) or set the additive gain applied on top of volume (see `_targetGain`). */
-	gain(gain?: number): number {
-		if (gain !== undefined) this._gain = gain;
-		this._applyGain();
+	/**
+	 * Get (no arg) or set the channel gain trim, in dB (−24 … +12; 0 = unity).
+	 *
+	 * Applied in the channel processor (after the EQ, before the panner), so
+	 * it is a post-fade trim that does not fight the volume fader, the mute
+	 * ramp or the loop anti-click gain — all of which live on the volume node.
+	 * The first non-default set lazily creates the channel node (like `eq()`).
+	 */
+	gain(gainIn?: number): number {
+		if (gainIn !== undefined) {
+			this._gain = Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, Number(gainIn) || 0));
+			if (this._channelNode) this._sendGain();
+			else this._ensureChannelNode();
+		}
 		this._emit('gain', this._gain);
 		return this._gain;
+	}
+
+	/** Push the channel gain trim (dB) to the channel processor. */
+	_sendGain(): void {
+		if (!this._channelNode) return;
+		this._channelNode.port.postMessage({
+			type: 'gain',
+			db: Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, Number(this._gain) || 0)),
+		});
 	}
 	/**
 	 * Get (no arg) or set the playback rate. While playing, a set rate is

@@ -673,6 +673,7 @@ class AudioEngine extends EventEmitter {
 		};
 		this.sounds.push(item);
 		this.soundMap[id] = item;
+		console.log('emit aadd');
 		this.emit('add', item.sound.id, item.sound);
 		sound.emitState('add', id);
 
@@ -699,28 +700,33 @@ class AudioEngine extends EventEmitter {
 	replace(id: string, url: string, filename: string): void {
 		this.unload(id);
 		const has = this.sounds.some((i) => i.id === id);
+		console.log({ has });
 		if (!has) {
 			// uploading into a column that has no sound yet (e.g. a freshly
 			// created empty model) → create it AND load it, otherwise the buffer
 			// is never decoded and the cell stays silent
+			console.log('replace > adding', id);
 			this.add(id, url, filename).sound.load();
 			return;
 		}
 		const sounds = this.sounds.map((i, idx) => {
-			if (i.id === id) {
-				const effectParams = i.sound._currentEffectParams();
-				i.sound = this.createSound(id, url, filename);
-				i.sound.load();
-				// the sound now owns a brand-new audio node — re-point its
-				// analysers, otherwise the meters keep reading the discarded one
-				// (e.g. after sampling or uploading into a channel)
-				this.setAnalysersNode(id, i.sound.node);
-				if (effectParams && effectParams.length)
-					effectParams.forEach((e) => this.addEffect(id, e.type, !e.bypassed, e.params));
-			}
+			if (i.id !== id) return i;
+			const effectParams = i.sound._currentEffectParams();
+			i.sound = this.createSound(id, url, filename);
+			i.sound.load();
+			// the sound now owns a brand-new audio node — re-point its
+			// analysers, otherwise the meters keep reading the discarded one
+			// (e.g. after sampling or uploading into a channel)
+			this.setAnalysersNode(id, i.sound.node);
+			if (effectParams && effectParams.length)
+				effectParams.forEach((e) => this.addEffect(id, e.type, !e.bypassed, e.params));
 			return i;
 		});
+
 		this.sounds = sounds;
+		// broadcast the swap (same (id, sound) shape as 'add') so views that
+		// listen for sound-level changes (the standalone Mixer) stay in sync
+		this.emit('replace', id, this.soundMap[id].sound);
 	}
 	/**
 	 * Duplicate a loaded sound's PCM under a new id, optionally cropped to a
@@ -869,7 +875,7 @@ class AudioEngine extends EventEmitter {
 		const s = this._sound(id);
 		return s ? s.eq(band, options) : undefined;
 	}
-	/** Get one sound's additive gain (no `gain`) or set it. */
+	/** Get one sound's channel gain trim in dB (no `gain`) or set it (−24 … +24). */
 	gain(id: string, gain?: number): number | void {
 		if (id) {
 			const s = this._sound(id);
@@ -1460,11 +1466,7 @@ class AudioEngine extends EventEmitter {
 	 * @param type - 'volume' | 'timedomain' | 'frequency'.
 	 * @param opt - analyser options (fftSize, cuts, …).
 	 */
-	analyse(
-		id: string,
-		type: string,
-		opt?: Record<string, unknown>,
-	): Analyser | undefined {
+	analyse(id: string, type: string, opt?: Record<string, unknown>): Analyser | undefined {
 		if (id === 'input') return this.inputAnalyser;
 		if (id === 'master') return this.outputAnalyser;
 
@@ -1477,11 +1479,12 @@ class AudioEngine extends EventEmitter {
 		// one analyser per sound+type, reused across mounts (a sound can have a
 		// frequency gradient and a volume meter without building two chains)
 		const key = id + ':' + type;
+		const node = this.analyserNodeFor(id);
 		let analyser = this.analyserMap[key];
 		if (analyser) {
-			analyser.setNode(sound.node);
+			analyser.setNode(node);
 		} else {
-			analyser = new Analyser(id, this.context, sound.node, opt);
+			analyser = new Analyser(id, this.context, node, opt);
 			this.analyserMap[key] = analyser;
 			this.analysers.push(analyser);
 		}
@@ -1495,6 +1498,16 @@ class AudioEngine extends EventEmitter {
 		Object.keys(this.analyserMap).forEach((key) => {
 			if (key.slice(0, key.lastIndexOf(':')) === id) this.analyserMap[key].setActive(on);
 		});
+	}
+	/**
+	 * The node a per-sound analyser taps: the channel processor when it exists
+	 * (post-EQ, post-gain-trim — the last per-sound stage), otherwise the
+	 * main-thread volume node. Meters therefore read what the strip is audible
+	 * at once the channel strip is in use.
+	 */
+	analyserNodeFor(id: string): AudioNode | undefined {
+		const sound = this._sound(id);
+		return sound ? (sound._channelNode || sound.node) : undefined;
 	}
 	/** Re-point a sound's analysers after its audio node was replaced. */
 	setAnalysersNode(id: string, node: AudioNode): void {
