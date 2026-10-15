@@ -26,6 +26,20 @@ interface Deferred<T = unknown> {
 	reject: (reason?: unknown) => void;
 }
 
+/**
+ * Globally-unique, monotonically increasing recording id.
+ *
+ * Recordings are persisted by consumers (the app keys them in IndexedDB), so a
+ * per-recorder counter that restarts at 0 on every page load collides with takes
+ * from earlier sessions. Seeding on the wall clock keeps ids unique across
+ * sessions while the +1 guard keeps two takes finished in the same millisecond
+ * apart. Ids are always larger than the small legacy counter ids already stored.
+ */
+let _lastRecordingId = 0;
+function nextRecordingId(): number {
+	return (_lastRecordingId = Math.max(Date.now(), _lastRecordingId + 1));
+}
+
 type RejectableWorker = Worker & { reject?: (err?: unknown) => void };
 
 /**
@@ -235,8 +249,9 @@ class Recorder extends EventEmitter {
 	/** Build the recording descriptor, resolve the promise and emit progress. */
 	_handleFinish(blob: Blob, buffer: Float32Array[], duration: number) {
 		const name = 'Rec #' + (this._recordingId + 1) + ' ' + moment().format('MMM DD HH:mm:ss');
+		this._recordingId++;
 		const recording = {
-			id: this._recordingId++,
+			id: nextRecordingId(),
 			url: URL.createObjectURL(blob),
 			blob: blob,
 			buffer: buffer,
