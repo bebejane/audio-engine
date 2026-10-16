@@ -104,6 +104,7 @@ class AudioEngine extends EventEmitter {
 	enableAnalysers: boolean;
 	enableLoops: boolean;
 	enableElapsed: boolean;
+	recorderName: string;
 	/** Warm the pitch shifter at startup (see AudioEngineOptions.preloadPitch). */
 	preloadPitch: boolean;
 	/**
@@ -150,6 +151,7 @@ class AudioEngine extends EventEmitter {
 		this.processSample = o.processSample;
 		this.modelsPath = o.modelsPath || '/models';
 		this.audioPath = o.audioPath || '/audio';
+		this.recorderName = o.recorderName || 'rec';
 		this.sounds = [];
 		this.soundMap = {};
 		this.midiMap = {};
@@ -179,6 +181,7 @@ class AudioEngine extends EventEmitter {
 		this.inputAnalyser = null;
 
 		this.masterRecorder = new Recorder(this.context, {
+			name: this.recorderName,
 			numChannels: 2,
 			sampleRate: this.sampleRate,
 			sampler: false,
@@ -193,6 +196,7 @@ class AudioEngine extends EventEmitter {
 				this.emit('recordingprogress', prog);
 			});
 		this.sampleRecorder = new Recorder(this.context, {
+			name: this.recorderName,
 			numChannels: 2,
 			sampleRate: this.sampleRate,
 			sampler: true,
@@ -1507,7 +1511,7 @@ class AudioEngine extends EventEmitter {
 	 */
 	analyserNodeFor(id: string): AudioNode | undefined {
 		const sound = this._sound(id);
-		return sound ? (sound._channelNode || sound.node) : undefined;
+		return sound ? sound._channelNode || sound.node : undefined;
 	}
 	/** Re-point a sound's analysers after its audio node was replaced. */
 	setAnalysersNode(id: string, node: AudioNode): void {

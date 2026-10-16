@@ -103,6 +103,8 @@ export interface AudioEngineOptions {
 	modelsPath?: string;
 	/** Base path a model's audio files are served from (default '/audio'). */
 	audioPath?: string;
+	/** Name of the recorder (default 'rec'). */
+	recorderName?: string;
 }
 
 /** A microphone as enumerated by `navigator.mediaDevices` (structural copy). */

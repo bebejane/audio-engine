@@ -141,7 +141,11 @@ export default class ModelManager {
 
 	/** Load a model by name (or a supplied zip buffer), populating the engine. */
 	async loadModel(name: string, zipContent?: ArrayBuffer): Promise<Model | undefined> {
-		let model = this._cache[name];
+		// An explicitly supplied zip (uploading a saved model) always wins over the
+		// in-memory cache — otherwise re-loading a model you just saved silently
+		// re-populates a stale cached copy (e.g. an in-session "new" model whose
+		// `files` are still empty) and the saved audio never loads.
+		let model = zipContent ? undefined : this._cache[name];
 		const cached = model && (model.new || (model.files.length && model.files[0].buffer));
 
 		if (!cached) {
@@ -335,14 +339,20 @@ export default class ModelManager {
 		const sounds = this.engine.sounds;
 		for (let i = 0; i < sounds.length; i++) {
 			const sound = sounds[i].sound;
-			if (sound._loaded) {
+			// A sound with no decoded audio (a cancelled/failed sample, a file the
+			// browser couldn't decode) has no bytes to store. Serialize it as an
+			// empty cell instead of one whose filename points at audio that is not
+			// in the zip — on reload that falls back to the audioPath URL, which
+			// 404s (no audio directory is served) and used to crash the loader.
+			const hasAudio = sound._loaded && !!sound._buffer && !!sound._filename;
+			if (hasAudio) {
 				const blob = new Blob([sound._buffer], { type: sound._mimeType });
 				zip.file(sound._filename, blob, { binary: false, base64: true });
 				model.contentLength += blob.size;
 			}
 			model.files.push({
-				filename: sound._filename,
-				mimeType: fileToMimeType(sound._filename) || undefined,
+				filename: hasAudio ? sound._filename : '',
+				mimeType: hasAudio ? fileToMimeType(sound._filename) || undefined : undefined,
 				params: sound.getSaveState(),
 			});
 		}
@@ -408,7 +418,10 @@ export default class ModelManager {
 	 * only played live (the 'b' action).
 	 */
 	randomizePreset(index?: number): Preset {
-		this.engine.master.stop();
+		// No master.stop() here: if something is already playing, the play() below
+		// replaces the live sources and masks the seam with its splice fade.
+		// Stopping first would click (a hard stop, and the following play would cut
+		// the fade-out tail) for no benefit.
 		const sounds = this.engine.sounds;
 
 		sounds.forEach((item: SoundItem) => {
@@ -422,12 +435,19 @@ export default class ModelManager {
 		const snapshots: PresetSound[] = [];
 		sounds.forEach((item: SoundItem, idx: number) => {
 			const sound = item.sound;
-			const start = Math.random() * sound._duration;
-			const end = Math.random() * (sound._duration - start);
+			const duration = Math.max(0, sound._duration);
 			const loopOn = Math.random() < 0.5;
 			const lockedOn = Math.random() > 0.75;
-			this.engine.loop(item.id, true, { start, end });
-			sound._loop = loopOn;
+			if (duration > 0) {
+				// Keep the window comfortably longer than the anti-click fade — a
+				// near-zero span (the old `random * (duration - start)`) stutters or
+				// clicks — and use loop() (not the `_loop` field) so the source and
+				// channel bookkeeping stay consistent.
+				const start = Math.random() * duration;
+				const span = Math.max(0.02, Math.random() * (duration - start));
+				const end = Math.min(duration, start + span);
+				this.engine.loop(item.id, loopOn, { start, end });
+			}
 			if (Math.random() < 0.5) this.engine.reverse(item.id, true);
 			setTimeout(() => this.engine.lock(item.id, lockedOn), idx * 200);
 			// lock() is applied on a stagger, so record the intended value

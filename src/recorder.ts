@@ -3,7 +3,9 @@ import type { ProcessSampleOptions } from './types';
 import { createRecordWorker, createEncoderWorker } from './workers';
 import moment from 'moment';
 import { EventEmitter } from 'events';
+
 const defaults = {
+	name: 'rec',
 	sampleRate: 44100,
 	numChannels: 1,
 	sampler: false,
@@ -14,6 +16,7 @@ const defaults = {
 	},
 };
 interface RecorderOptions extends Record<string, any> {
+	name?: string;
 	sampleRate?: number;
 	numChannels?: number;
 	sampler?: boolean;
@@ -54,6 +57,7 @@ type RejectableWorker = Worker & { reject?: (err?: unknown) => void };
  */
 class Recorder extends EventEmitter {
 	context: AudioContext;
+	_name: string;
 	_sampleRate: number;
 	_numChannels: number;
 	_sampler: boolean;
@@ -85,6 +89,7 @@ class Recorder extends EventEmitter {
 		super();
 		opt = { ...defaults, ...opt };
 		this.context = context;
+		this._name = opt.name;
 		this._sampleRate = opt.sampleRate;
 		this._numChannels = opt.numChannels;
 		this._sampler = opt.sampler;
@@ -248,7 +253,7 @@ class Recorder extends EventEmitter {
 	}
 	/** Build the recording descriptor, resolve the promise and emit progress. */
 	_handleFinish(blob: Blob, buffer: Float32Array[], duration: number) {
-		const name = 'Rec #' + (this._recordingId + 1) + ' ' + moment().format('MMM DD HH:mm:ss');
+		const filename = `${this._name} #${this._recordingId + 1} ${moment().format('MMM DD HH:mm:ss').toLowerCase()}.wav`;
 		this._recordingId++;
 		const recording = {
 			id: nextRecordingId(),
@@ -256,7 +261,7 @@ class Recorder extends EventEmitter {
 			blob: blob,
 			buffer: buffer,
 			mimeType: 'audio/wav',
-			filename: name + '.wav',
+			filename,
 			name: name,
 			duration: duration,
 		};

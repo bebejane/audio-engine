@@ -125,6 +125,10 @@ const EQ_TYPES = ['lowshelf', 'peaking', 'highshelf', 'lowpass', 'highpass'];
 /** Channel gain trim range, in dB (−24 … +24). */
 const MIN_GAIN_DB = -24;
 const MAX_GAIN_DB = 24;
+/** Gain fade-in applied at the start of a fresh playback (seconds). */
+const START_FADE = 0.005;
+/** Gain fade-out applied when stopping a playing sound (seconds). */
+const STOP_FADE = 0.005;
 /** Clamp a possibly-NaN number into [lo, hi]. */
 const clampNumber = (v: unknown, lo: number, hi: number): number => {
 	const n = Number(v);
@@ -456,33 +460,46 @@ class Sound extends EventEmitter {
 		// disconnected. The gain is seeded to its target below, before the
 		// source starts, so a muted start is silent from the first quantum.
 		if (soloOn ? this._solo : true) this._connectChain();
-		// a fresh chain starts fully wet when the shifter is part of it: it is
-		// built before the source starts, so there is no live signal to crossfade
-		if (this._pitchEngaged) this._setPitchMix(1, 0);
+		// Fresh chain with the shifter in the path: start on the dry branch and
+		// crossfade to the shifter only once it has primed (a freshly connected
+		// Signalsmith node emits silence and then signal — arriving at full wet
+		// that onset clicks). Mirrors _engagePitchLive's mid-playback crossfade.
+		if (this._pitchEngaged) {
+			this._setPitchMix(0, 0);
+			this._setPitchMix(1, 0.02, this._pitchLatency > 0 ? this._pitchLatency : 0.05);
+		}
 
 		const ct = this.context.currentTime;
-		// Seed the volume node with the current target before the source starts.
-		// While muted it can still hold a stale gain from an earlier unmuted
-		// playback; snapping it to 0 here keeps the connected chain silent and
-		// leaves unmute (which ramps via _applyGain) to fade in mid-play.
+		// Gain this source starts at: a per-play `volume` override wins over the
+		// fader, and mute always wins over both. While muted the chain stays
+		// connected but silent (unmute ramps in mid-play via _applyGain).
+		const startGain =
+			opt.volume !== undefined ? (this._muted ? 0 : opt.volume) : this._targetGain();
+		const explicitFadeIn = (opt.fadeIn || 0) !== 0;
 		this.node.gain.cancelScheduledValues(ct);
-		this.node.gain.setValueAtTime(this._targetGain(), ct);
 		// any in-flight splice envelope was just cancelled, so stop blocking
 		// _applyGain on it
 		this._spliceEnds = 0;
+		if (!replacing && !explicitFadeIn) {
+			// Ramp in from silence so the source's very first sample is silent. The
+			// channel worklet's intro fade is armed by a port message that lands a
+			// render quantum late, so it can't cover the first ~1-3ms — a ramp on
+			// the gain AudioParam is sample-accurate and does. `_spliceEnds` keeps
+			// _applyGain from cutting the ramp with a mid-flight volume write.
+			this.node.gain.setValueAtTime(0, ct);
+			this.node.gain.linearRampToValueAtTime(startGain, ct + START_FADE);
+			this._spliceEnds = ct + START_FADE;
+		} else {
+			// a replacing start is masked by the splice dip scheduled above; an
+			// explicit fadeIn owns the volume envelope itself
+			this.node.gain.setValueAtTime(startGain, ct);
+		}
 		this._offset = Math.max(0, opt.start || this._pausedAt || this._loopStart || 0);
 		this.source.loop = this._loop;
 		this.source.loopStart = Math.max(0, this._loopStart || this.source.loopStart || 0);
 		this.source.loopEnd = Math.max(0, this._loopEnd || this.source.loopEnd || 0);
 		this.source.playbackRate.value = this._rate;
 		this.source.addEventListener('ended', this.onEnded);
-
-		if (opt.volume !== undefined)
-			// mute wins over a per-play volume override
-			this.node.gain.setValueAtTime(
-				this._muted ? 0 : opt.volume,
-				this.context.currentTime + 0.005,
-			); // this.volume(opt.volume)
 
 		this.source.start(0, this._offset); //, opt.duration && !this._loop ? opt.duration : this._duration - this._offset);
 
@@ -1125,7 +1142,20 @@ class Sound extends EventEmitter {
 		clearTimeout(this.fadeOutTimeout);
 		clearTimeout(this.fadeInTimeout);
 
-		if (this.source && this._playing) this.source.stop();
+		if (this.source && this._playing) {
+			// Ramp to silence and stop the source at the end of the ramp instead of
+			// truncating it mid-waveform. The channel worklet only releases its
+			// anti-click gain *toward unity*, so a plain stop() clicks. A start that
+			// follows immediately (a preset switch) replaces this source and re-masks
+			// the seam through play()'s splice fade.
+			const ct = this.context.currentTime;
+			if (this._targetGain() > 0) {
+				this.node.gain.cancelScheduledValues(ct);
+				this.node.gain.setValueAtTime(this.node.gain.value, ct);
+				this.node.gain.linearRampToValueAtTime(0, ct + STOP_FADE);
+			}
+			this.source.stop(ct + STOP_FADE);
+		}
 
 		//if (!this.spillOver) this.effects.filter((e) => !e.bypassed).forEach((e) => e.effect.disconnect())
 
@@ -1756,7 +1786,7 @@ class Sound extends EventEmitter {
 
 		this._loading = true;
 		this._emit('loading', true);
-		this._url = this._url.includes('blob:') ? this._url : encodeURIComponent(this._url);
+		this._url = this._url.includes('blob:') ? this._url : encodeURI(this._url);
 
 		if (/^data:[^;]+;base64,/.test(url)) {
 			let data = atob(url.split(',')[1]);
@@ -1764,6 +1794,19 @@ class Sound extends EventEmitter {
 			for (let i = 0; i < data.length; ++i) dataView[i] = data.charCodeAt(i);
 			this.decodeAudioData(dataView.buffer);
 		} else {
+			// Route every failure (bad status, transport error, synchronous
+			// send() throw) through one handler. This used to call `xhr.onerror`
+			// as a function, but only `addEventListener('error')` is registered —
+			// so a missing/404 audio file threw "xhr.onerror is not a function"
+			// instead of reporting a load error.
+			const onError = (err: unknown) => {
+				this._loading = false;
+				this._ready = true;
+				this._url = null;
+				this._error = err;
+				this._emit('ready', true);
+				this._emit('loaderror', err);
+			};
 			let xhr = new XMLHttpRequest();
 			xhr.open('GET', this._url, true);
 			xhr.withCredentials = false;
@@ -1771,24 +1814,15 @@ class Sound extends EventEmitter {
 			xhr.addEventListener('load', () => {
 				let code = parseInt((xhr.status + '')[0]);
 				if (code !== 0 && code !== 2 && code !== 3)
-					return (xhr.onerror as unknown as (msg: string) => void)(
-						'Failed loading audio file with status: ' + xhr.status + '.',
-					);
+					return onError('Failed loading audio file with status: ' + xhr.status + '.');
 				this.decodeAudioData(xhr.response);
 			});
-			xhr.addEventListener('error', (err) => {
-				this._loading = false;
-				this._ready = true;
-				this._url = null;
-				this._error = err;
-				this._emit('ready', true);
-				this._emit('loaderror', err);
-			});
+			xhr.addEventListener('error', (err) => onError(err));
 
 			try {
 				xhr.send();
 			} catch (e) {
-				(xhr.onerror as unknown as (e: unknown) => void)(e);
+				onError(e);
 			}
 		}
 	}
