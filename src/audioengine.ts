@@ -668,7 +668,8 @@ class AudioEngine extends EventEmitter {
 	): SoundItem {
 		if (this.soundMap[id]) throw new Error('ID ' + id + ' already exists');
 
-		const sound = this.createSound(id, url, filename, opt);
+		// new sounds start locked; a saved state passed in `opt` can still override
+		const sound = this.createSound(id, url, filename, { ...opt, locked: opt?.locked ?? true });
 		const item = {
 			id: id,
 			url: url,

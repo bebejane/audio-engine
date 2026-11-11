@@ -45,6 +45,9 @@ function nextRecordingId(): number {
 
 type RejectableWorker = Worker & { reject?: (err?: unknown) => void };
 
+/** One capture request: its promise and the grid id it was started for. */
+type Take = { promise: Deferred | null; id: string | number | undefined };
+
 /**
  * Records audio from an AudioNode (master mix) or, in sampler mode, from a
  * MediaStream (microphone) and produces a WAV Blob + Float32 buffer.
@@ -83,7 +86,11 @@ class Recorder extends EventEmitter {
 	_error: unknown;
 	recordingProgress: ReturnType<typeof setInterval> | null;
 	rectime: number;
-	_encoderPromise: Deferred<Blob> | null;
+	/** Takes stopped/cancelled but not yet answered by the worker, in order. */
+	_takes: Take[];
+	/** record() has been called and is waiting for the worklet to be ready. */
+	_starting: boolean;
+	_processorReady: Promise<void>;
 
 	constructor(context: AudioContext, opt: RecorderOptions = {}) {
 		super();
@@ -102,22 +109,26 @@ class Recorder extends EventEmitter {
 		this._recordingId = 0;
 		this.worker = null;
 		this.encoderWorker = null;
+		this._takes = [];
+		this._starting = false;
 		this.init();
 	}
 	/** Spawn the record worker, wire its messages and load the worklet. */
 	init() {
 		this.worker = createRecordWorker();
-		this.initProcessor();
+		this._processorReady = this.initProcessor();
 		this.worker.addEventListener('error', (err: unknown) => {
 			console.error('error record worker', err);
 			this.emit('error', err);
 		});
 		this.worker.addEventListener('message', (event: MessageEvent) => {
+			// the worker answers takes in the order they were stopped/cancelled, so
+			// each reply settles its own take, not whichever take is current now
+			const take = this._takes.shift() ?? this._takeNow();
 			if (event.data.cancelled) {
 				console.log('Worker: CANCELLED');
 				this._clearProgress();
-				this._disconnect();
-				return this._handleError('CANCELLED');
+				return this._handleError('CANCELLED', 0, take);
 			}
 			console.log('DONE sAMPLER');
 			const blob = event.data.blob;
@@ -125,29 +136,27 @@ class Recorder extends EventEmitter {
 			this._duration = buffer[0].length / this._sampleRate;
 			this._processing = true;
 
-			if (!this._processSample) return this._handleFinish(blob, buffer, this._duration);
+			if (!this._processSample)
+				return this._handleFinish(take, blob, buffer, this._duration);
 
-			console.log('processing sample', this._id, this._duration);
-			this._process(buffer, this._id)
+			console.log('processing sample', take.id, this._duration);
+			this._process(buffer, take.id)
 				.then((data: { blob: Blob; buffer: Float32Array[] }) => {
-					this._handleFinish(data.blob, data.buffer, this._duration);
+					this._handleFinish(take, data.blob, data.buffer, this._duration);
 				})
 				.catch((err: unknown) => {
 					console.error(err);
-					this._handleError(err, this._duration);
+					this._handleError(err, this._duration, take);
 				})
 				.then(() => {
-					this._disconnect();
-
-					if (this._sampler) this.emit('sampling', this._id, false);
-					else this.emit('recording', false);
-
+					// no disconnect here: a newer take may be live by now
 					this._clearProgress();
 
 					console.log('Worker: DONE!');
 				});
 		});
 		this.worker.addEventListener('error', (err: unknown) => {
+			this._disconnect();
 			this._handleError(err);
 		});
 	}
@@ -183,22 +192,43 @@ class Recorder extends EventEmitter {
 	 * filename, name, duration }`; rejects with 'RECORDING' if already busy.
 	 */
 	record(node: AudioNode, id?: string | number) {
-		if (this._recording) return Promise.reject('RECORDING');
+		if (this._recording || this._starting) return Promise.reject('RECORDING');
 		this._id = id;
 		this._node = node;
+		this._starting = true;
 		return new Promise((resolve, reject) => {
 			this._promise = { resolve, reject };
-			this._start();
+			// the worklet loads asynchronously: wait for it rather than rejecting a
+			// press that lands in the first moments after boot
+			this._processorReady.then(() => {
+				this._starting = false;
+				this._start();
+			});
 		});
 	}
-	/** Stop capturing and ask the worker to pack the take to a WAV. */
+	/** The take that is current (being captured, or the last one requested). */
+	_takeNow(): Take {
+		return { promise: this._promise, id: this._id };
+	}
+	/**
+	 * Stop capturing and ask the worker to pack the take to a WAV. The take's
+	 * promise travels with the request, so a take started while this one is
+	 * still encoding can never receive this take's result.
+	 */
 	stop() {
+		if (!this._recording) return;
+		this._takes.push(this._takeNow());
+		this._promise = null;
 		this._processing = true;
 		this._disconnect();
 		this.worker.postMessage({ stop: true });
 	}
 	/** Discard the current take (worker replies `{ cancelled: true }`). */
 	cancel() {
+		if (!this._recording) return;
+		this._takes.push(this._takeNow());
+		this._promise = null;
+		this._disconnect();
 		this.worker.postMessage({ cancel: true });
 	}
 	/** Connect the source to the worklet (and output stream) and start capture. */
@@ -241,19 +271,22 @@ class Recorder extends EventEmitter {
 		else this.emit('recording', true);
 	}
 	/** Emit the sampler/recording-off event and reject the pending promise. */
-	_handleError(err: unknown, duration = 0) {
+	_handleError(err: unknown, duration = 0, take: Take = this._takeNow()) {
 		//this.emit('progress', this._recordingId, {error:err, start:this.rectime, elapsed:duration, duration:duration, recording:false, processing:false})
 		this._error = err;
 
-		if (this._sampler) this.emit('sampling', this._id, false);
-		else this.emit('recording', false);
-		if (this._promise) this._promise.reject(err);
+		// only report "not recording" when no newer take has started
+		if (!this._recording) {
+			if (this._sampler) this.emit('sampling', take.id, false);
+			else this.emit('recording', false);
+		}
+		if (take.promise) take.promise.reject(err);
 
 		this._clearProgress();
 	}
-	/** Build the recording descriptor, resolve the promise and emit progress. */
-	_handleFinish(blob: Blob, buffer: Float32Array[], duration: number) {
-		const filename = `${this._name} #${this._recordingId + 1} ${moment().format('MMM DD HH:mm:ss').toLowerCase()}.wav`;
+	/** Build the recording descriptor, resolve the take's promise and emit progress. */
+	_handleFinish(take: Take, blob: Blob, buffer: Float32Array[], duration: number) {
+		const name = `${this._name} #${this._recordingId + 1} ${moment().format('MMM DD HH:mm:ss').toLowerCase()}`;
 		this._recordingId++;
 		const recording = {
 			id: nextRecordingId(),
@@ -261,15 +294,17 @@ class Recorder extends EventEmitter {
 			blob: blob,
 			buffer: buffer,
 			mimeType: 'audio/wav',
-			filename,
+			filename: name + '.wav',
 			name: name,
 			duration: duration,
 		};
 
-		if (this._sampler) this.emit('sampling', this._id, false);
-		else this.emit('recording', false);
+		if (!this._recording) {
+			if (this._sampler) this.emit('sampling', take.id, false);
+			else this.emit('recording', false);
+		}
 
-		if (this._promise) this._promise.resolve(recording);
+		if (take.promise) take.promise.resolve(recording);
 
 		this.emit('progress', this._recordingId, {
 			start: this._rectime,
@@ -341,28 +376,28 @@ class Recorder extends EventEmitter {
 	_encodeAudio(buffer: Float32Array[], format: string, opt: Record<string, unknown>) {
 		this._processing = true;
 		return new Promise((resolve, reject) => {
-			this._encoderPromise = { resolve, reject };
-			this.encoderWorker = createEncoderWorker();
-			this.encoderWorker.reject = reject;
-			this.encoderWorker.addEventListener('message', (event: MessageEvent) => {
+			// each encode keeps its own worker and resolve/reject pair: takes can
+			// finish back to back, and a shared slot would strand the earlier one
+			const worker = createEncoderWorker() as RejectableWorker;
+			this.encoderWorker = worker;
+			worker.reject = reject;
+			worker.addEventListener('message', (event: MessageEvent) => {
 				if (event.data.progress) return this.emit('encodingprogress', event.data.progress);
 
-				if (this.encoderWorker) this.encoderWorker.terminate();
-				this.encoderWorker = null;
+				worker.terminate();
+				if (this.encoderWorker === worker) this.encoderWorker = null;
 				this._processing = false;
-				this._encoderPromise.resolve(event.data);
+				resolve(event.data);
 			});
-			this.encoderWorker.addEventListener('error', (err: unknown) => {
-				if (this.encoderWorker && this.encoderWorker.terminate) {
-					this.encoderWorker.terminate();
-					this.encoderWorker = null;
-					this._processing = false;
-					console.error('terminated encoding worker wit error', err);
-				}
-				this._encoderPromise.reject(err);
+			worker.addEventListener('error', (err: unknown) => {
+				worker.terminate();
+				if (this.encoderWorker === worker) this.encoderWorker = null;
+				this._processing = false;
+				console.error('terminated encoding worker wit error', err);
+				reject(err);
 			});
 
-			this.encoderWorker.postMessage({ buffer, format, options: opt });
+			worker.postMessage({ buffer, format, options: opt });
 		});
 	}
 	/** Emit a `progress` event describing recording/processing state. */
@@ -385,8 +420,9 @@ class Recorder extends EventEmitter {
 	}
 	/** Stop the progress timer, clear flags and emit a final progress frame. */
 	_clearProgress() {
+		// a newer take owns the progress timer and the recording flag: leave them be
+		if (this._recording) return;
 		clearInterval(this.recordingProgress);
-		this._recording = false;
 		this._processing = false;
 		this._emitProgress();
 	}

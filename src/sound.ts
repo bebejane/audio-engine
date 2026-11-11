@@ -129,6 +129,8 @@ const MAX_GAIN_DB = 24;
 const START_FADE = 0.005;
 /** Gain fade-out applied when stopping a playing sound (seconds). */
 const STOP_FADE = 0.005;
+/** Silence ramp before a live graph rewire, so the seam lands at zero gain (seconds). */
+const REWIRE_DIP = 0.008;
 /** Clamp a possibly-NaN number into [lo, hi]. */
 const clampNumber = (v: unknown, lo: number, hi: number): number => {
 	const n = Number(v);
@@ -255,6 +257,10 @@ class Sound extends EventEmitter {
 	_channelNodeFailed: boolean;
 	_bufferVersion: number;
 	_destroyed: boolean;
+	/** Bumped on every play/stop so a pending rewire knows it has been superseded. */
+	_playToken: number;
+	/** A deferred live rewire is already scheduled (see _rebuildChain). */
+	_rewirePending: boolean;
 	_offset: number;
 	_startedAt: number;
 	_elapsed: number;
@@ -353,6 +359,8 @@ class Sound extends EventEmitter {
 		// _spliceFade. While it is still in the future the volume envelope owns
 		// the gain, so _applyGain must not stomp it.
 		this._spliceEnds = 0;
+		this._playToken = 0;
+		this._rewirePending = false;
 		// no pitch shifter in the path yet, so nothing delays the signal
 		this._chainDelay = 0;
 		// measured once the shifter node exists (see _ensurePitchNode)
@@ -425,6 +433,7 @@ class Sound extends EventEmitter {
 
 		if (this._paused) return this.pause(false);
 
+		this._playToken++;
 		if (this.source) {
 			this.source.removeEventListener('ended', this.onEnded);
 			this._stopChannel();
@@ -556,8 +565,33 @@ class Sound extends EventEmitter {
 	 * blanket disconnect/reconnect would otherwise cut the signal and click.
 	 */
 	_rebuildChain(): void {
-		if (this._playing && this.source && this._connected) this._spliceFade();
-		this._connectChain();
+		if (!(this._playing && this.source && this._connected)) {
+			this._connectChain();
+			return;
+		}
+		// Connection changes only take effect at a render-quantum boundary, so a dip
+		// that starts now can still be mid-level at the seam — that is the click.
+		// Ramp to silence, rewire once it is there, then ramp back up.
+		const ct = this.context.currentTime;
+		this.node.gain.cancelScheduledValues(ct);
+		this.node.gain.setValueAtTime(this.node.gain.value, ct);
+		this.node.gain.linearRampToValueAtTime(0, ct + REWIRE_DIP);
+		this._spliceEnds = ct + REWIRE_DIP;
+		// several changes in the same dip share one rewire (it reads the latest chain)
+		if (this._rewirePending) return;
+		this._rewirePending = true;
+		const token = this._playToken;
+		setTimeout(() => {
+			this._rewirePending = false;
+			// a stop or a fresh play() since the dip has already routed the source
+			if (this._destroyed || token !== this._playToken || !this._playing) return;
+			this._connectChain();
+			const t = this.context.currentTime;
+			this.node.gain.cancelScheduledValues(t);
+			this.node.gain.setValueAtTime(0, t);
+			this.node.gain.linearRampToValueAtTime(this._targetGain(), t + START_FADE);
+			this._spliceEnds = t + START_FADE;
+		}, REWIRE_DIP * 1000 + 4);
 	}
 	/** Lazily create the dry/wet pair the engaged shifter is crossfaded across. */
 	_ensurePitchGains(): boolean {
@@ -603,7 +637,12 @@ class Sound extends EventEmitter {
 	 */
 	_engagePitchLive(): void {
 		const live = !!(this._playing && this.source && this._connected);
-		if (live) this._setPitchMix(0, 0);
+		if (live) {
+			// the rewire below is deferred, so create the dry/wet pair while the mix
+			// is still fully dry — otherwise it would first be built at full wet
+			this._setPitchMix(0, 0);
+			this._ensurePitchGains();
+		}
 		this._rebuildChain();
 		if (live) this._setPitchMix(1, 0.02, this._pitchLatency > 0 ? this._pitchLatency : 0.05);
 	}
@@ -1137,6 +1176,7 @@ class Sound extends EventEmitter {
 	stop() {
 		if (!this.source) return;
 
+		this._playToken++;
 		this._clearElapsed();
 		this._stopChannel();
 		clearTimeout(this.fadeOutTimeout);

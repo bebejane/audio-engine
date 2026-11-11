@@ -424,35 +424,43 @@ export default class ModelManager {
 		// the fade-out tail) for no benefit.
 		const sounds = this.engine.sounds;
 
-		sounds.forEach((item: SoundItem) => {
-			const id = item.id;
-			if (!this.engine.exist(id)) return;
-			this.engine.pitch(id, Math.round(Math.random() * 24 - 12));
-			this.engine.volume(id, Math.random() * 0.5 + 0.2);
-			this.engine.pan(id, Math.random() * 180 - 90);
-		});
-
+		// These edits build a new preset; they must not be written back into the
+		// slot being edited (the one whose key was pressed last), or creating
+		// preset "0" overwrites preset "9" with the same random settings.
 		const snapshots: PresetSound[] = [];
-		sounds.forEach((item: SoundItem, idx: number) => {
-			const sound = item.sound;
-			const duration = Math.max(0, sound._duration);
-			const loopOn = Math.random() < 0.5;
-			const lockedOn = Math.random() > 0.75;
-			if (duration > 0) {
-				// Keep the window comfortably longer than the anti-click fade — a
-				// near-zero span (the old `random * (duration - start)`) stutters or
-				// clicks — and use loop() (not the `_loop` field) so the source and
-				// channel bookkeeping stay consistent.
-				const start = Math.random() * duration;
-				const span = Math.max(0.02, Math.random() * (duration - start));
-				const end = Math.min(duration, start + span);
-				this.engine.loop(item.id, loopOn, { start, end });
-			}
-			if (Math.random() < 0.5) this.engine.reverse(item.id, true);
-			setTimeout(() => this.engine.lock(item.id, lockedOn), idx * 200);
-			// lock() is applied on a stagger, so record the intended value
-			snapshots.push(this._snapshot(item, { loop: loopOn, locked: lockedOn }));
-		});
+		this._syncing = true;
+		try {
+			sounds.forEach((item: SoundItem) => {
+				const id = item.id;
+				if (!this.engine.exist(id)) return;
+				this.engine.pitch(id, Math.round(Math.random() * 24 - 12));
+				this.engine.volume(id, Math.random() * 0.5 + 0.2);
+				this.engine.pan(id, Math.random() * 180 - 90);
+			});
+
+			sounds.forEach((item: SoundItem, idx: number) => {
+				const sound = item.sound;
+				const duration = Math.max(0, sound._duration);
+				const loopOn = Math.random() < 0.5;
+				const lockedOn = Math.random() > 0.75;
+				if (duration > 0) {
+					// Keep the window comfortably longer than the anti-click fade — a
+					// near-zero span (the old `random * (duration - start)`) stutters or
+					// clicks — and use loop() (not the `_loop` field) so the source and
+					// channel bookkeeping stay consistent.
+					const start = Math.random() * duration;
+					const span = Math.max(0.02, Math.random() * (duration - start));
+					const end = Math.min(duration, start + span);
+					this.engine.loop(item.id, loopOn, { start, end });
+				}
+				if (Math.random() < 0.25) this.engine.reverse(item.id, true);
+				this.engine.lock(item.id, true);
+				// lock() is applied on a stagger, so record the intended value
+				snapshots.push(this._snapshot(item, { loop: loopOn, locked: lockedOn }));
+			});
+		} finally {
+			this._syncing = false;
+		}
 
 		const preset: Preset = { at: Date.now(), sounds: snapshots };
 		const slot = index === undefined || index === null ? this._freeSlot() : index;
